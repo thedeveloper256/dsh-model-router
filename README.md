@@ -42,13 +42,13 @@ An agent is an *executor* if it carries either of the markers the harness stamps
 
 Everything else is a planner. That logic lives in `src/policy.ts` as a plain function, so it's easy to reason about and test.
 
-### A behavior worth knowing
+### What the router does and doesn't override
 
-The router only overrides the model (`provider` + `model`), not the rest of the request. So reasoning effort and the other sampling settings still come from your session's selection — pick "max effort" and you get pro/flash doing max effort, just not a different model. It's "which model runs" that's enforced, not "how hard it thinks".
+The router always stamps `provider` + `model`. `reasoningEffort` and `maxTokens` are *optional per role*: set them in the config and they're enforced for that role; leave them out and those fields inherit from your session's selection. So picking "max effort" in the UI but not pinning `reasoningEffort` in the config still gives you max-effort thinking — it just happens on the routed model.
 
 ## Tuning
 
-All configuration lives on the plugin row. If you want different models, or you'd rather the prompt section or skill not be registered, patch the row in the profile's `cordis.patch.yml`:
+All configuration lives on the plugin row. Patch it in the profile's `cordis.patch.yml`:
 
 ```yaml
 - patch:
@@ -57,14 +57,33 @@ All configuration lives on the plugin row. If you want different models, or you'
         planner:            # root-agent route
           provider: deepseek-official
           model: deepseek-v4-pro
+          reasoningEffort: high   # off | low | high | max (omit to inherit)
+          maxTokens: 8192         # output cap (omit to inherit)
         executor:           # subagent route
           provider: deepseek-official
           model: deepseek-v4-flash
+          reasoningEffort: low
+        mode: strict        # strict | plan (see below)
         promptSection: true # register the always-on routing section
         skill: true         # register the pro-flash-routing skill
 ```
 
+`mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving pro for real planning.
+
 The defaults are exactly the table at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
+
+## Reduce pro token usage
+
+The planner is the expensive model, so most of the savings come from shrinking its spend:
+
+- **Lower `reasoningEffort`.** The harness default runs pro at `max`, which produces a lot of reasoning tokens. `high` (or `low`) on the planner route keeps most of the quality at a fraction of the cost.
+- **Cap output** with `maxTokens` on the planner route so a verbose turn can't balloon.
+- **Reserve pro for planning** with `mode: plan` — trivial Q&A and execution-style turns stop hitting pro at all.
+- **Keep the planner's context lean.** Input tokens dominate after reasoning. Delegate aggressively and trust the subagent's report; don't re-read big files or full transcripts on the planner. Use targeted reads and let auto-compaction (`/compact`) trim history.
+- **Tune the host pruner.** The tool-result pruner truncates oversized results before they reach the model (default ~8 KB); lowering `tool-result-pruner` → `thresholdChars` trims more planner input. That's harness config, not this plugin's row.
+- **Exploit DeepSeek's context cache.** Repeated prefixes are served from cache at a big discount, so keep the system prompt and conversation prefix stable between turns.
+
+The first three are one-line changes on this plugin's row; the last three are discipline and host tuning.
 
 ## Does it work?
 

@@ -7,6 +7,10 @@
  * in every mode (web / headless / tui) and every agent preset, including
  * subagents the delegation tools create.
  *
+ * Each role route may also pin `reasoningEffort` and `maxTokens`; when set,
+ * they override the session's selection for that role. A `mode` switch lets a
+ * deployment reserve the planner route for actual planning.
+ *
  * The plugin also publishes:
  *  - a system-prompt section stating the planner/executor convention, and
  *  - the `pro-flash-routing` skill teaching the agent to plan itself and
@@ -16,15 +20,18 @@
  */
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
+import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
 import { roleFor, routeFor, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
 const name = "model-router";
 
-/** One provider/model pair, with defaults. */
+/** One provider/model pair, with defaults and optional effort/token caps. */
 const ModelRouteSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
+  reasoningEffort: z.union(["off", "low", "high", "max"]),
+  maxTokens: z.number().min(1),
 });
 
 /** The plugin's public config, validated at row load. */
@@ -32,11 +39,12 @@ const Config = z.object({
   planner: ModelRouteSchema.default({
     provider: "deepseek-official",
     model: "deepseek-v4-pro",
-  }),
+  } as never),
   executor: ModelRouteSchema.default({
     provider: "deepseek-official",
     model: "deepseek-v4-flash",
-  }),
+  } as never),
+  mode: z.union(["strict", "plan"]).default("strict"),
   promptSection: z.boolean().default(true),
   skill: z.boolean().default(true),
 });
@@ -52,6 +60,7 @@ function resolveConfig(raw: unknown): RouterConfig {
   return {
     planner: parsed.planner,
     executor: parsed.executor,
+    mode: parsed.mode,
     promptSection: parsed.promptSection,
     skill: parsed.skill,
   };
@@ -63,7 +72,7 @@ function resolveConfig(raw: unknown): RouterConfig {
  */
 const SECTION_ORDER = -50;
 
-const SECTION_TEXT = `Model routing is role-based in this session. You are the planner and run on {PLANNER_MODEL}. Do your own planning, design, review of delegated output, and user-facing synthesis on this agent. Code execution runs on {EXECUTOR_MODEL}: after a plan is approved, delegate implementation work — writing code, running commands, builds, and tests — to subagents, which are automatically routed to {EXECUTOR_MODEL}. Give each subagent a complete, self-contained prompt and prefer background delegation for independent work. Do not hand-write large amounts of code or run long executions on this planner agent; delegate instead.`;
+const SECTION_TEXT = `Model routing is role-based. Planning runs on {PLANNER_MODEL}; implementation runs on {EXECUTOR_MODEL}. You are the root agent: plan, design, review subagent output, and write the final answer here. Delegate implementation — writing code, running commands, builds, tests — to subagents with complete, self-contained prompts, preferring background delegation for independent work. Keep plans and replies concise. Do not hand-write large amounts of code or run long executions here; delegate instead.`;
 
 const SKILL_NAME = "pro-flash-routing";
 
@@ -86,6 +95,10 @@ This session routes models by role:
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
 
+## Keep this agent's context lean
+
+Input tokens are the expensive part of the planner. Don't re-read large files or full transcripts on this agent — trust the subagent's final report. Prefer targeted reads (offset/limit) over whole files. When the context grows, compact rather than re-sending everything.
+
 ## Delegation guidelines
 
 - Start independent delegations together in one assistant message and continue useful work while they run (background mode by default).
@@ -105,7 +118,7 @@ const ROW_ID = "model-router";
 interface AgentLike {
   ctx: AgentScopedContext;
   options?: { subagentDepth?: number };
-  session?: { header?: { origin?: string } };
+  session?: { header?: { origin?: string }; events?: unknown[] };
 }
 
 /** The agent-scoped context's waterfall surface the router uses. */
@@ -141,6 +154,17 @@ interface HarnessContext {
   };
 }
 
+/** Fold plan-mode state for an agent without trusting the agent's exact shape. */
+function isPlanModeActive(agent: AgentLike): boolean {
+  const events = agent.session?.events;
+  if (!Array.isArray(events)) return false;
+  try {
+    return foldPlanMode(events as Parameters<typeof foldPlanMode>[0]);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Cordis service: per-agent request routing plus the convention surface.
  */
@@ -166,9 +190,16 @@ class ModelRouter extends Service {
         "agent/request",
         async (payload, next) => {
           const resolved = await next();
-          const route = routeFor(agent, this.config);
+          const route = routeFor(agent, this.config, isPlanModeActive(agent));
           if (route === undefined) return resolved;
-          return { ...resolved, provider: route.provider, model: route.model };
+          const stamped: Record<string, unknown> = {
+            ...resolved,
+            provider: route.provider,
+            model: route.model,
+          };
+          if (route.reasoningEffort !== undefined) stamped.reasoningEffort = route.reasoningEffort;
+          if (route.maxTokens !== undefined) stamped.maxTokens = route.maxTokens;
+          return stamped;
         },
         { prepend: true },
       );
@@ -213,4 +244,10 @@ export {
   roleFor,
   routeFor,
 };
-export type { AgentRole, ModelRoute, RouterConfig } from "./policy.js";
+export type {
+  AgentRole,
+  ModelRoute,
+  ReasoningEffort,
+  RoutingMode,
+  RouterConfig,
+} from "./policy.js";

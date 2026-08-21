@@ -4,6 +4,7 @@ import { roleFor, routeFor, type RouterConfig } from "../src/policy.js";
 const CONFIG: RouterConfig = {
   planner: { provider: "deepseek-official", model: "deepseek-v4-pro" },
   executor: { provider: "deepseek-official", model: "deepseek-v4-flash" },
+  mode: "strict",
   promptSection: true,
   skill: true,
 };
@@ -35,12 +36,49 @@ describe("roleFor", () => {
 });
 
 describe("routeFor", () => {
-  it("routes planners to pro", () => {
+  it("routes planners to pro in strict mode", () => {
     expect(routeFor({}, CONFIG)).toEqual({ provider: "deepseek-official", model: "deepseek-v4-pro" });
   });
 
   it("routes executors to flash", () => {
     expect(routeFor({ options: { subagentDepth: 1 } }, CONFIG)).toEqual({
+      provider: "deepseek-official",
+      model: "deepseek-v4-flash",
+    });
+  });
+
+  it("passes through reasoningEffort and maxTokens when configured", () => {
+    const config: RouterConfig = {
+      ...CONFIG,
+      planner: { provider: "deepseek-official", model: "deepseek-v4-pro", reasoningEffort: "high", maxTokens: 8192 },
+    };
+    expect(routeFor({}, config)).toEqual({
+      provider: "deepseek-official",
+      model: "deepseek-v4-pro",
+      reasoningEffort: "high",
+      maxTokens: 8192,
+    });
+  });
+
+  it("in plan mode, routes the root to executor when not planning", () => {
+    const config: RouterConfig = { ...CONFIG, mode: "plan" };
+    expect(routeFor({}, config, false)).toEqual({
+      provider: "deepseek-official",
+      model: "deepseek-v4-flash",
+    });
+  });
+
+  it("in plan mode, keeps the root on the planner route while planning", () => {
+    const config: RouterConfig = { ...CONFIG, mode: "plan" };
+    expect(routeFor({}, config, true)).toEqual({
+      provider: "deepseek-official",
+      model: "deepseek-v4-pro",
+    });
+  });
+
+  it("in plan mode, executors stay on the executor route regardless", () => {
+    const config: RouterConfig = { ...CONFIG, mode: "plan" };
+    expect(routeFor({ options: { subagentDepth: 1 } }, config, true)).toEqual({
       provider: "deepseek-official",
       model: "deepseek-v4-flash",
     });

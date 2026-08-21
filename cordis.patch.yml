@@ -13,10 +13,18 @@
         planner:
           provider: deepseek-official
           model: deepseek-v4-pro
+          # reasoningEffort: high   # optional: off | low | high | max (omit to inherit)
+          # maxTokens: 8192        # optional output-token cap (omit to inherit)
         # Every delegated subagent: code writing and execution.
         executor:
           provider: deepseek-official
           model: deepseek-v4-flash
+          # reasoningEffort: low
+          # maxTokens: 16384
+        # strict: root is always the planner (pro).
+        # plan:   root is pro only while plan mode is active; otherwise it
+        #         falls back to the executor route to reserve pro for planning.
+        mode: strict
         # Publish the always-on routing convention prompt section.
         promptSection: true
         # Register the `pro-flash-routing` skill in the session catalog.
