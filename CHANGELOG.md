@@ -1,18 +1,12 @@
 # Changelog
 
-## v0.1.0 (unreleased)
+## v0.1.1
 
-- Role-based model routing: the session's root agent (planner) is stamped
-  `deepseek-v4-pro`; every delegation child (subagent, subagent_fork, workflow
-  workers, ralph rounds) is stamped `deepseek-v4-flash`.
-- The `agent/request` rewrite registers outermost in the waterfall, so it wins
-  over dsh-base's built-in default (`deepseek-v4-flash`) and the UI's
-  per-session model pick.
-- Always-on prompt section stating the planner/executor convention (renders
-  before the persona).
-- `pro-flash-routing` skill registered in the session skill catalog.
-- Configurable via the `model-router` row (`planner`, `executor`,
-  `promptSection`, `skill`).
-- Verified live against the harness: planner session requests logged as
-  `deepseek-v4-pro`, executor subagent session requests as
-  `deepseek-v4-flash` (headless profile, session-log model metadata).
+- Prefer the npm install in the README now that the package is published.
+- Add `dsh-plugin` and related keywords for npm discoverability.
+
+## v0.1.0
+
+- Initial release: role-based model routing — planner (root agent) on `deepseek-v4-pro`, delegated executor subagents on `deepseek-v4-flash`.
+- Ships an always-on prompt section and the `pro-flash-routing` skill.
+- Live-verified against the harness via session-log model metadata.
