@@ -12,14 +12,15 @@ The idea is simple: pro is the better thinker, flash is fast and cheap at grindi
 Add it to a profile (this installs into the `web` profile; change the name for another one):
 
 ```bash
-dsh plugin --profile web add git+https://github.com/thedeveloper256/dsh-model-router
+dsh plugin --profile web add dsh-model-router
 ```
 
-That's a git install, so pnpm clones the repo and builds it on the spot. pnpm guards build scripts by default, though — it'll print an `allowBuilds` key you need to add to the profile's `pnpm-workspace.yaml`, then re-run the same `dsh plugin` command. It's a one-time thing:
+That pulls it from npm, which ships prebuilt — no build step needed.
 
-```yaml
-allowBuilds:
-  dsh-model-router@git+https://github.com/thedeveloper256/dsh-model-router#<commit>: true
+Prefer the source? A git install works too, but pnpm clones and builds it on the spot and will ask you to approve the build script once (add the `allowBuilds` key it prints to the profile's `pnpm-workspace.yaml`, then re-run):
+
+```bash
+dsh plugin --profile web add git+https://github.com/thedeveloper256/dsh-model-router
 ```
 
 Once it's in, restart the profile. You should see the row under `model-router` in `dsh web --dump-config`.
