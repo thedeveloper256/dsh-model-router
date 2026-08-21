@@ -1,0 +1,23 @@
+# dsh-model-router bundle patch.
+#
+# Inserted after the shipped bundle layers of the profile it is installed
+# into, so it overrides nothing but adds one row: the router itself. All
+# routing decisions live in the plugin's config here — there are no other
+# rows to patch because the `agent/request` rewrite applies to every agent
+# regardless of which preset or mode mounts the delegation tools.
+- insert:
+    - id: model-router
+      name: 'dsh-model-router'
+      config:
+        # The session's root agent: planning, design, review, synthesis.
+        planner:
+          provider: deepseek-official
+          model: deepseek-v4-pro
+        # Every delegated subagent: code writing and execution.
+        executor:
+          provider: deepseek-official
+          model: deepseek-v4-flash
+        # Publish the always-on routing convention prompt section.
+        promptSection: true
+        # Register the `pro-flash-routing` skill in the session catalog.
+        skill: true
