@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-router",
   "description": "DeepSeek Harness plugin: role-based model routing — the planner agent runs on deepseek-v4-pro, delegated executor subagents run on deepseek-v4-flash.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publishConfig": {
     "access": "public"
   },

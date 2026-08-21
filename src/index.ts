@@ -21,7 +21,7 @@
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
-import { roleFor, routeFor, type RouterConfig } from "./policy.js";
+import { effortFor, recentStepsHadError, roleFor, routeFor, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
 const name = "model-router";
@@ -32,6 +32,9 @@ const ModelRouteSchema = z.object({
   model: z.string().min(1),
   reasoningEffort: z.union(["off", "low", "high", "max"]),
   maxTokens: z.number().min(1),
+  escalateOnError: z.boolean(),
+  escalateTo: z.union(["off", "low", "high", "max"]),
+  recoverySteps: z.number().min(1),
 });
 
 /** The plugin's public config, validated at row load. */
@@ -197,8 +200,9 @@ class ModelRouter extends Service {
             provider: route.provider,
             model: route.model,
           };
-          if (route.reasoningEffort !== undefined) stamped.reasoningEffort = route.reasoningEffort;
           if (route.maxTokens !== undefined) stamped.maxTokens = route.maxTokens;
+          const effort = effortFor(route, agent.session?.events);
+          if (effort !== undefined) stamped.reasoningEffort = effort;
           return stamped;
         },
         { prepend: true },
@@ -241,6 +245,8 @@ export {
   SKILL_DESCRIPTION,
   SKILL_NAME,
   SKILL_WHEN_TO_USE,
+  effortFor,
+  recentStepsHadError,
   roleFor,
   routeFor,
 };

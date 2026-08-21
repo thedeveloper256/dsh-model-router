@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { roleFor, routeFor, type RouterConfig } from "../src/policy.js";
+import {
+  effortFor,
+  recentStepsHadError,
+  roleFor,
+  routeFor,
+  type ModelRoute,
+  type RouterConfig,
+} from "../src/policy.js";
 
 const CONFIG: RouterConfig = {
   planner: { provider: "deepseek-official", model: "deepseek-v4-pro" },
@@ -88,5 +95,86 @@ describe("routeFor", () => {
     const config = { ...CONFIG } as Partial<RouterConfig>;
     delete (config as { planner?: RouterConfig["planner"] }).planner;
     expect(routeFor({}, config as RouterConfig)).toBeUndefined();
+  });
+});
+
+describe("recentStepsHadError", () => {
+  const toolResult = (turn: number, step: number, error?: unknown) =>
+    error === undefined
+      ? { type: "tool/result", data: { turn, step, message: {} } }
+      : { type: "tool/result", data: { turn, step, message: {}, error } };
+
+  it("returns false for no events or non-arrays", () => {
+    expect(recentStepsHadError(undefined)).toBe(false);
+    expect(recentStepsHadError([])).toBe(false);
+    expect(recentStepsHadError(undefined as never, 1)).toBe(false);
+  });
+
+  it("detects an error in the most recent step", () => {
+    const events = [
+      toolResult(1, 1),
+      toolResult(1, 2, { name: "SandboxUnavailableError" }),
+    ];
+    expect(recentStepsHadError(events)).toBe(true);
+  });
+
+  it("respects the recovery window", () => {
+    const events = [
+      toolResult(1, 1, { name: "Oops" }),
+      toolResult(1, 2),
+      toolResult(1, 3),
+    ];
+    // Window of 2: the error at step 1 is out of range; the last two steps are clean.
+    expect(recentStepsHadError(events, 2)).toBe(false);
+    // Window of 3: the error at step 1 is in range.
+    expect(recentStepsHadError(events, 3)).toBe(true);
+  });
+
+  it("deduplicates repeated tool results for the same step", () => {
+    const events = [
+      toolResult(1, 2, { name: "Oops" }),
+      toolResult(1, 2),
+    ];
+    // Both events describe step (1,2); the error must still be found even
+    // though the step counts only once toward the window.
+    expect(recentStepsHadError(events, 1)).toBe(true);
+  });
+
+  it("ignores non-tool events", () => {
+    const events = [
+      { type: "assistant/message", data: {} },
+      { type: "tool/result", data: { turn: 1, step: 1, message: {} } },
+    ];
+    expect(recentStepsHadError(events)).toBe(false);
+  });
+});
+
+describe("effortFor", () => {
+  const route: ModelRoute = {
+    provider: "deepseek-official",
+    model: "deepseek-v4-flash",
+    reasoningEffort: "high",
+  };
+
+  it("uses the baseline when escalation is off", () => {
+    expect(effortFor(route, [{ type: "tool/result", data: { turn: 1, step: 1, error: {} } }])).toBe("high");
+  });
+
+  it("escalates to escalateTo after a recent error", () => {
+    const escalating: ModelRoute = { ...route, escalateOnError: true, escalateTo: "max" };
+    const events = [{ type: "tool/result", data: { turn: 1, step: 1, error: {} } }];
+    expect(effortFor(escalating, events)).toBe("max");
+  });
+
+  it("falls back to the baseline when escalateTo is unset", () => {
+    const escalating: ModelRoute = { ...route, escalateOnError: true };
+    const events = [{ type: "tool/result", data: { turn: 1, step: 1, error: {} } }];
+    expect(effortFor(escalating, events)).toBe("high");
+  });
+
+  it("stays at baseline when the recent window is clean", () => {
+    const escalating: ModelRoute = { ...route, escalateOnError: true, escalateTo: "max" };
+    const events = [{ type: "tool/result", data: { turn: 1, step: 1, message: {} } }];
+    expect(effortFor(escalating, events)).toBe("high");
   });
 });

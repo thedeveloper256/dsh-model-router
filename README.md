@@ -62,13 +62,18 @@ All configuration lives on the plugin row. Patch it in the profile's `cordis.pat
         executor:           # subagent route
           provider: deepseek-official
           model: deepseek-v4-flash
-          reasoningEffort: low
+          reasoningEffort: high
+          escalateOnError: true   # after a failed step…
+          escalateTo: max         #   …bump effort for the next request
+          recoverySteps: 2        #   …wearing off after N clean steps
         mode: strict        # strict | plan (see below)
         promptSection: true # register the always-on routing section
         skill: true         # register the pro-flash-routing skill
 ```
 
 `mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving pro for real planning.
+
+**Error-driven escalation** (`escalateOnError`): when a route's agent hits a failed tool step, the *next* request bumps to `escalateTo` and wears off after `recoverySteps` clean steps. It's deterministic and stateless — the router folds the session log per request, so only prior steps are considered (a failure can't escalate the very request that caused it). It's a per-route knob: enable it on the executor to make flash think harder after a flubbed execution step, without touching the baseline.
 
 The defaults are exactly the table at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
 

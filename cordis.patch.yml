@@ -19,8 +19,11 @@
         executor:
           provider: deepseek-official
           model: deepseek-v4-flash
-          # reasoningEffort: low
+          # reasoningEffort: high
           # maxTokens: 16384
+          # escalateOnError: true   # v1: after a failed step, escalate effort
+          # escalateTo: max         #   to this level for the next request…
+          # recoverySteps: 2        #   …wearing off after N clean steps
         # strict: root is always the planner (pro).
         # plan:   root is pro only while plan mode is active; otherwise it
         #         falls back to the executor route to reserve pro for planning.
