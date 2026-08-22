@@ -47,6 +47,13 @@ export interface RouterConfig {
   planner: ModelRoute;
   executor: ModelRoute;
   mode: RoutingMode;
+  /**
+   * Live off-switch. Defaults to true; settable from Settings → Plugins →
+   * model-router (applies immediately) or from the patch row (next boot).
+   * When false, the router stops rewriting requests and unregisters the
+   * prompt section and the skill.
+   */
+  enabled: boolean;
   promptSection: boolean;
   skill: boolean;
 }

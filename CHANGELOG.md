@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0
+
+- **GUI on/off toggle**: new `enabled` config (default `true`), surfaced as a
+  live settings section — Settings → Plugins → dsh-model-router. Turning it
+  off stops all request rewrites and unregisters the prompt section and skill;
+  turning it back on restores them. Applies immediately, no restart; persists
+  in `settings.yaml` under `model-router:`.
+
 ## v0.3.0
 
 - **Error-driven effort escalation**: `escalateOnError` / `escalateTo` /
