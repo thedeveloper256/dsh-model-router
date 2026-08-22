@@ -21,6 +21,7 @@
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
+import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { effortFor, recentStepsHadError, roleFor, routeFor, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
@@ -48,9 +49,13 @@ const Config = z.object({
     model: "deepseek-v4-flash",
   } as never),
   mode: z.union(["strict", "plan"]).default("strict"),
+  enabled: z.boolean().default(true),
   promptSection: z.boolean().default(true),
   skill: z.boolean().default(true),
 });
+
+/** Settings namespace the live on/off toggle lives under (settings.yaml). */
+const SETTINGS_NS = settingsNamespace("model-router");
 
 /**
  * Resolve raw row config into the internal shape, failing loud on garbage.
@@ -64,6 +69,7 @@ function resolveConfig(raw: unknown): RouterConfig {
     planner: parsed.planner,
     executor: parsed.executor,
     mode: parsed.mode,
+    enabled: parsed.enabled,
     promptSection: parsed.promptSection,
     skill: parsed.skill,
   };
@@ -144,7 +150,7 @@ interface HarnessContext {
   ): () => void;
   on(event: "agent/disposed", listener: (agent: unknown) => void): () => void;
   systemPrompt: {
-    section(section: { name: string; order: number; text: string }): unknown;
+    section(section: { name: string; order: number; text: string }): () => void;
   };
   skills: {
     register(skill: {
@@ -153,7 +159,7 @@ interface HarnessContext {
       whenToUse?: string;
       content: string;
       source: string;
-    }): unknown;
+    }): () => void;
   };
 }
 
@@ -176,14 +182,27 @@ class ModelRouter extends Service {
 
   config: RouterConfig;
 
+  /** Currently authoritative config; swapped by the settings section when one is mounted. */
+  source: () => RouterConfig;
+
+  /** Host-plane surface the router consumes (events, prompt registry, skills). */
+  harness: HarnessContext;
+
+  /** Disposer of the currently registered prompt section, if any. */
+  promptDispose?: () => void;
+
+  /** Disposer of the currently registered skill, if any. */
+  skillDispose?: () => void;
+
   constructor(ctx: Context, rawConfig: unknown = {}) {
     super(ctx, "modelRouter");
     this.config = resolveConfig(rawConfig);
-    const harness = ctx as unknown as HarnessContext;
+    this.source = () => this.config;
+    this.harness = ctx as unknown as HarnessContext;
 
     // Every agent that gets created — root sessions, delegation children,
     // workflow workers, ralph rounds — passes through here.
-    harness.on("agent/created", ({ agent }) => {
+    this.harness.on("agent/created", ({ agent }) => {
       // `prepend` puts this listener OUTERMOST in the `agent/request`
       // waterfall: the harness's model-selection listener runs inside it, so
       // this rewrite is applied LAST and wins over the session's selected
@@ -193,7 +212,9 @@ class ModelRouter extends Service {
         "agent/request",
         async (payload, next) => {
           const resolved = await next();
-          const route = routeFor(agent, this.config, isPlanModeActive(agent));
+          const cfg = this.source();
+          if (!cfg.enabled) return resolved;
+          const route = routeFor(agent, cfg, isPlanModeActive(agent));
           if (route === undefined) return resolved;
           const stamped: Record<string, unknown> = {
             ...resolved,
@@ -207,24 +228,56 @@ class ModelRouter extends Service {
         },
         { prepend: true },
       );
-      harness.on("agent/disposed", (disposed) => {
+      this.harness.on("agent/disposed", (disposed) => {
         if (disposed === agent) dispose();
       });
     });
 
-    if (this.config.promptSection) {
-      harness.systemPrompt.section({
+    // Register the convention surface from the composition config, then let
+    // the settings section (when mounted) take over as the live source.
+    this.render(this.config);
+    installSettingsSection(
+      ctx,
+      SETTINGS_NS,
+      Config,
+      this.config as unknown as ReturnType<typeof Config>,
+      {
+        setSource: (current) => {
+          this.source = current;
+        },
+        onChange: () => this.render(this.source()),
+      },
+    );
+  }
+
+  /**
+   * Register the convention surface (prompt section + skill) for `cfg`,
+   * replacing whatever is currently registered. Called on construction and
+   * after every committed settings change; while `enabled` is false, nothing
+   * stays registered.
+   */
+  private render(cfg: RouterConfig): void {
+    if (this.promptDispose) {
+      this.promptDispose();
+      this.promptDispose = undefined;
+    }
+    if (this.skillDispose) {
+      this.skillDispose();
+      this.skillDispose = undefined;
+    }
+    if (!cfg.enabled) return;
+    if (cfg.promptSection) {
+      this.promptDispose = this.harness.systemPrompt.section({
         name: ROW_ID,
         order: SECTION_ORDER,
-        text: SECTION_TEXT.replaceAll("{PLANNER_MODEL}", this.config.planner.model).replaceAll(
+        text: SECTION_TEXT.replaceAll("{PLANNER_MODEL}", cfg.planner.model).replaceAll(
           "{EXECUTOR_MODEL}",
-          this.config.executor.model,
+          cfg.executor.model,
         ),
       });
     }
-
-    if (this.config.skill) {
-      harness.skills.register({
+    if (cfg.skill) {
+      this.skillDispose = this.harness.skills.register({
         name: SKILL_NAME,
         description: SKILL_DESCRIPTION,
         whenToUse: SKILL_WHEN_TO_USE,
@@ -239,6 +292,7 @@ export {
   Config,
   ModelRouter,
   ModelRouter as default,
+  SETTINGS_NS,
   name,
   ROW_ID,
   SKILL_CONTENT,

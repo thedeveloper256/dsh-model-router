@@ -28,6 +28,7 @@
         # plan:   root is pro only while plan mode is active; otherwise it
         #         falls back to the executor route to reserve pro for planning.
         mode: strict
+        # enabled: false  # off switch — GUI: Settings → Plugins → model-router (live, no restart); patch row needs a reboot
         # Publish the always-on routing convention prompt section.
         promptSection: true
         # Register the `pro-flash-routing` skill in the session catalog.

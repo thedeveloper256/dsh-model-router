@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Config } from "../src/index.js";
 import {
   effortFor,
   recentStepsHadError,
@@ -12,9 +13,29 @@ const CONFIG: RouterConfig = {
   planner: { provider: "deepseek-official", model: "deepseek-v4-pro" },
   executor: { provider: "deepseek-official", model: "deepseek-v4-flash" },
   mode: "strict",
+  enabled: true,
   promptSection: true,
   skill: true,
 };
+
+describe("Config", () => {
+  it("defaults enabled to true", () => {
+    expect(Config({}).enabled).toBe(true);
+  });
+
+  it("honors enabled: false", () => {
+    expect(Config({ enabled: false }).enabled).toBe(false);
+  });
+
+  it("keeps existing defaults when enabled is absent", () => {
+    const cfg = Config({});
+    expect(cfg.mode).toBe("strict");
+    expect(cfg.promptSection).toBe(true);
+    expect(cfg.skill).toBe(true);
+    expect(cfg.planner.model).toBe("deepseek-v4-pro");
+    expect(cfg.executor.model).toBe("deepseek-v4-flash");
+  });
+});
 
 describe("roleFor", () => {
   it("classifies a root agent without delegation markers as planner", () => {

@@ -46,6 +46,21 @@ Everything else is a planner. That logic lives in `src/policy.ts` as a plain fun
 
 The router always stamps `provider` + `model`. `reasoningEffort` and `maxTokens` are *optional per role*: set them in the config and they're enforced for that role; leave them out and those fields inherit from your session's selection. So picking "max effort" in the UI but not pinning `reasoningEffort` in the config still gives you max-effort thinking — it just happens on the routed model.
 
+## Turning the router off
+
+Routing is on by default. Two ways to switch it off:
+
+- **GUI (Settings → Plugins → dsh-model-router):** the plugin registers a live
+  settings section; flip `enabled` off. It applies immediately (no restart),
+  persists in `settings.yaml` under `model-router:`, and unregisters the prompt
+  section and the skill too. Flip it back on and everything returns.
+- **Patch row:** set `enabled: false` in the profile's `cordis.patch.yml` row
+  (takes effect on the next boot). `disabled: true` still skips the row entirely.
+
+With the router off, requests use the session's selected model (your
+`agent-default-model` setting or the base default) — the router is simply not
+rewriting them.
+
 ## Tuning
 
 All configuration lives on the plugin row. Patch it in the profile's `cordis.patch.yml`:
