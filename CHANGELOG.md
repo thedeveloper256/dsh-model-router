@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.0
+
+- **Browser half**: the package now ships a client bundle the harness serves
+  automatically. Settings → Plugins renders a "Model router" card with a live
+  `enabled` switch (plus overridden badge, reset button, and read-only route
+  lines). Changes apply live and persist in `settings.yaml` under
+  `model-router:` — no restart, no extra config.
+- The card is served only to loopback browsers (a harness-wide rule covering
+  all settings pages); elsewhere the patch row or `settings.yaml` remain the
+  fallbacks.
+
 ## v0.4.0
 
 - **GUI on/off toggle**: new `enabled` config (default `true`), surfaced as a

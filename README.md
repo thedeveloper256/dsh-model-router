@@ -61,6 +61,28 @@ With the router off, requests use the session's selected model (your
 `agent-default-model` setting or the base default) — the router is simply not
 rewriting them.
 
+## The GUI toggle (v0.5.0+)
+
+Since v0.5.0 the package ships a browser half, and the harness serves it
+automatically — no extra config. After installing (or updating to) v0.5.0+
+and restarting the profile, **Settings → Plugins** shows a **Model router**
+card with a live **Enabled** switch, an "Overridden" badge and **Reset to
+default** button once you've changed it, and a read-only view of the current
+planner/executor routes and mode. Flipping the switch applies immediately (no
+restart) and persists in `settings.yaml` under `model-router:` — the same
+mechanism the GUI toggle described above uses.
+
+One harness-wide caveat (it applies to **all** settings pages — Models,
+Plugins, everything — not to this plugin specifically): the harness serves
+settings pages only to **loopback** browsers (`localhost` / `127.x`). A remote
+browser sees "settings are unavailable" instead of the card. Fallbacks that
+work everywhere:
+
+- **Patch row** — set `enabled: false` in the profile's `cordis.patch.yml`
+  (takes effect on the next boot), or
+- **`settings.yaml`** — add `model-router: { enabled: false }` under the
+  settings file the profile uses; this applies live, same as the GUI.
+
 ## Tuning
 
 All configuration lives on the plugin row. Patch it in the profile's `cordis.patch.yml`:
