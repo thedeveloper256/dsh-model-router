@@ -99,7 +99,9 @@ default — **from every role**: the root (planner) agent and all delegated
 subagents. Everything else keeps the pro/flash role routing untouched. The
 vision branch is checked first, so a subagent reading an image still lands on
 the vision model, not on flash. Optional `vision.reasoningEffort` /
-`vision.maxTokens` pins work exactly like the per-role ones.
+`vision.maxTokens` pins work exactly like the per-role ones. Image detection
+reads the session log: any user message or tool result carrying an image keeps
+the session on the vision model while that image is in context.
 
 The plugin ships the support in its own `cordis.patch.yml`:
 

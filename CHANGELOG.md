@@ -1,3 +1,10 @@
+## v0.6.2
+
+- Fix vision routing never firing: the `agent/request` waterfall payload does
+  not carry `messages`, so image detection now reads the session event log
+  (`user/message` and `assistant/message` content, including images nested in
+  `tool-result` blocks) instead of the request payload.
+
 ## v0.6.1
 
 - Fix the vision-support bundle patch: the `llm-deepseek` catalog row and the

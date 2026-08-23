@@ -22,7 +22,7 @@ import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
 import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { effortFor, hasImageContent, recentStepsHadError, roleFor, routeFor, type RouterConfig } from "./policy.js";
+import { effortFor, hasImageContent, recentStepsHadError, roleFor, routeFor, sessionHasImage, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
 const name = "model-router";
@@ -228,13 +228,15 @@ class ModelRouter extends Service {
           const resolved = await next();
           const cfg = this.source();
           if (!cfg.enabled) return resolved;
-          // Vision branch FIRST: any request whose messages carry image
-          // content is stamped with the vision model, regardless of role.
-          // The harness's own model-selection listener has already run
-          // (`await next()`), so this rewrite wins over the session model.
+          // Vision branch FIRST: any request whose session log carries image
+          // content is stamped with the vision model, regardless of role. The
+          // `agent/request` waterfall payload never includes `messages`, so
+          // detection reads the session event log. The harness's own
+          // model-selection listener has already run (`await next()`), so
+          // this rewrite wins over the session model.
           if (
             cfg.vision.enabled &&
-            hasImageContent((resolved as { messages?: unknown }).messages)
+            sessionHasImage(agent.session?.events)
           ) {
             const stamped: Record<string, unknown> = {
               ...resolved,

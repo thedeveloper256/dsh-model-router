@@ -205,6 +205,32 @@ export function hasImageContent(messages: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether the agent's session log carries any image content.
+ *
+ * The `agent/request` waterfall payload never includes `messages`, so vision
+ * detection reads the session event log instead: a `user/message` event's data
+ * IS the message (content at `data.content`), an `assistant/message` event's
+ * content lives at `data.message.content`, and both may nest images inside
+ * `tool-result` blocks. Once an image is in the conversation it stays in the
+ * request context, so one image anywhere in the log routes vision.
+ *
+ * @param events - the agent's session event log (or `undefined`).
+ * @returns true when any user or assistant message carries image content.
+ */
+export function sessionHasImage(events: readonly unknown[] | undefined): boolean {
+  if (!Array.isArray(events)) return false;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i] as
+      | { type?: string; data?: { content?: unknown; message?: { content?: unknown } } }
+      | undefined;
+    if (event?.type !== "user/message" && event?.type !== "assistant/message") continue;
+    const content = event.data?.message?.content ?? event.data?.content;
+    if (Array.isArray(content) && blocksContainImage(content)) return true;
+  }
+  return false;
+}
+
 /** Whether any block (or nested tool-result content) is an image block. */
 function blocksContainImage(blocks: readonly unknown[]): boolean {
   for (const block of blocks) {
