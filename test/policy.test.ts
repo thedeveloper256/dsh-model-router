@@ -16,6 +16,11 @@ const CONFIG: RouterConfig = {
   enabled: true,
   promptSection: true,
   skill: true,
+  vision: {
+    enabled: false,
+    provider: "deepseek-official",
+    model: "deepseek-v4-flash-vision-exp",
+  },
 };
 
 describe("Config", () => {

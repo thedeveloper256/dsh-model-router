@@ -53,7 +53,8 @@ Routing is on by default. Two ways to switch it off:
 - **GUI (Settings → Plugins → dsh-model-router):** the plugin registers a live
   settings section; flip `enabled` off. It applies immediately (no restart),
   persists in `settings.yaml` under `model-router:`, and unregisters the prompt
-  section and the skill too. Flip it back on and everything returns.
+  section and the skill too. Flip it back on and everything returns. The same
+  card also hosts the Vision switch (v0.6.0+, see below).
 - **Patch row:** set `enabled: false` in the profile's `cordis.patch.yml` row
   (takes effect on the next boot). `disabled: true` still skips the row entirely.
 
@@ -82,6 +83,39 @@ work everywhere:
   (takes effect on the next boot), or
 - **`settings.yaml`** — add `model-router: { enabled: false }` under the
   settings file the profile uses; this applies live, same as the GUI.
+
+## Vision routing (v0.6.0+)
+
+Since v0.6.0 the router can also handle image-bearing requests. **It is opt-in
+and off by default** (`vision.enabled: false`). Two ways to turn it on:
+
+- **GUI:** on the same **Model router** card, flip the **Vision** switch (live,
+  no restart, persists in `settings.yaml`), or
+- **Patch row / settings:** set `vision.enabled: true` on the plugin's config.
+
+When enabled, **any request whose messages carry an image is stamped with the
+vision model** — `deepseek-v4-flash-vision-exp` from `deepseek-official` by
+default — **from every role**: the root (planner) agent and all delegated
+subagents. Everything else keeps the pro/flash role routing untouched. The
+vision branch is checked first, so a subagent reading an image still lands on
+the vision model, not on flash. Optional `vision.reasoningEffort` /
+`vision.maxTokens` pins work exactly like the per-role ones.
+
+The plugin ships the support in its own `cordis.patch.yml`:
+
+- a **catalog entry** for the vision model on the `llm-deepseek` row (with
+  `inputModalities: [text, image]`, plus raised `contextWindow`/`maxTokens`
+  restated for the pro/flash rows), and
+- **raised `attachment-local` image admission limits** so normal screenshots
+  (~8K, 15MB) attach without being rejected (`maxImageDimension: 8192`,
+  `maxImagePixels: 100000000`, `maxImageBytes: 15728640`).
+
+Both are defaults you can override in your **profile**'s `cordis.patch.yml` —
+the profile layer applies after the plugin layer, so a `patch:` targeting
+`llm-deepseek` or `attachment-local` in the profile wins. One hard requirement
+remains: the vision model **must be present in the catalog with image input
+modality**, or the provider rejects the request at call time with
+`UNSUPPORTED_CONTENT` — the shipped catalog row is what satisfies that.
 
 ## Tuning
 

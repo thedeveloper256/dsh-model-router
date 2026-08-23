@@ -42,6 +42,24 @@ export interface ModelRoute {
 /** The two roles the router distinguishes. */
 export type AgentRole = "planner" | "executor";
 
+/**
+ * Opt-in vision route: when enabled, any request whose messages carry image
+ * content is stamped with the vision model, from every role (root agent and
+ * subagents alike). Everything else keeps the pro/flash role routing.
+ */
+export interface VisionRoute {
+  /** Master switch. Defaults to false — vision routing is opt-in. */
+  enabled: boolean;
+  /** Provider the vision model is served from. */
+  provider: string;
+  /** The vision model to stamp onto image-bearing requests. */
+  model: string;
+  /** Optional reasoning-effort pin; omitted means inherit the session's. */
+  reasoningEffort?: ReasoningEffort;
+  /** Optional output-token cap; omitted means inherit the session's. */
+  maxTokens?: number;
+}
+
 /** Resolved router configuration: one route per role plus routing mode. */
 export interface RouterConfig {
   planner: ModelRoute;
@@ -56,6 +74,8 @@ export interface RouterConfig {
   enabled: boolean;
   promptSection: boolean;
   skill: boolean;
+  /** Opt-in vision routing for image-bearing requests (v0.6.0+). */
+  vision: VisionRoute;
 }
 
 /** Default recovery window: an error escalates for the next two completed steps. */
@@ -163,4 +183,34 @@ export function effortFor(
     return route.escalateTo ?? route.reasoningEffort;
   }
   return route.reasoningEffort;
+}
+
+/**
+ * Whether any message in a request payload carries image content.
+ *
+ * A message carries an image when its `content` is a block array containing
+ * an `image` block, directly or nested inside a `tool-result` block (tool
+ * results may embed the images they produced). String content never does.
+ *
+ * @param messages - the request's `messages` array (any runtime shape).
+ * @returns true when at least one message contains image content.
+ */
+export function hasImageContent(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    const content = (message as { content?: unknown })?.content;
+    if (typeof content === "string") continue;
+    if (Array.isArray(content) && blocksContainImage(content)) return true;
+  }
+  return false;
+}
+
+/** Whether any block (or nested tool-result content) is an image block. */
+function blocksContainImage(blocks: readonly unknown[]): boolean {
+  for (const block of blocks) {
+    const candidate = block as { type?: unknown; content?: unknown };
+    if (candidate?.type === "image") return true;
+    if (candidate?.type === "tool-result" && Array.isArray(candidate.content) && blocksContainImage(candidate.content)) return true;
+  }
+  return false;
 }
