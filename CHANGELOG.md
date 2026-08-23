@@ -1,3 +1,11 @@
+## v0.6.1
+
+- Fix the vision-support bundle patch: the `llm-deepseek` catalog row and the
+  `attachment-local` limits now use direct id-targeted entries (the `patch:`
+  wrapper was ignored by the loader), so installing the plugin actually adds
+  `deepseek-v4-flash-vision-exp` to the catalog and raises image admission
+  limits.
+
 # Changelog
 
 ## v0.6.0
