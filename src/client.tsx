@@ -1,8 +1,9 @@
 /**
- * dsh-model-router browser half (v0.5.0).
+ * dsh-model-router browser half (v0.6.0).
  *
  * Registers one card into the Plugins settings surface: a live `enabled`
- * switch plus a read-only view of the current routes. The card binds the
+ * switch plus a read-only view of the current routes, and (v0.6.0+) an
+ * opt-in Vision routing section with its own live switch. The card binds the
  * `model-router` settings namespace through the client settings scope, exactly
  * like the host-plane cards in `@deepseek-ai/dsh-client-ui-settings-plugins`:
  * the scope's snapshot (`{ status, value, base, user, revision, writable,
@@ -43,6 +44,12 @@ const en: Record<string, string> = {
   mode: "Mode",
   modeStrict: "strict — the root agent is always the planner",
   modePlan: "plan — the root agent is pro only while plan mode is active",
+  visionTitle: "Vision routing",
+  visionDesc:
+    "Opt-in (default off): when enabled, any request containing an image routes to the vision model, from every role; other requests keep the pro/flash routing.",
+  visionSwitch: "Vision",
+  visionReset: "Reset vision to default",
+  visionRoute: "Vision model",
 };
 
 /** Simplified Chinese copy. */
@@ -64,6 +71,12 @@ const zh: Record<string, string> = {
   mode: "模式",
   modeStrict: "strict — 根 agent 始终为规划者",
   modePlan: "plan — 根 agent 仅在计划模式激活时使用 pro",
+  visionTitle: "视觉路由",
+  visionDesc:
+    "可选（默认关闭）：启用后，任何包含图片的请求都会路由到视觉模型，适用于所有角色；其他请求保持 pro/flash 路由。",
+  visionSwitch: "视觉",
+  visionReset: "恢复视觉默认值",
+  visionRoute: "视觉模型",
 };
 
 /** The settings scope snapshot this card reads. */
@@ -83,6 +96,7 @@ interface ConfigView {
   mode: string;
   planner?: { provider?: string; model?: string };
   executor?: { provider?: string; model?: string };
+  vision?: { enabled?: boolean; provider?: string; model?: string };
 }
 
 /** Minimal cordis browser-context surface this bundle consumes. */
@@ -129,6 +143,8 @@ interface ModelRouterCardActions {
   hooks: { modelRouterCard: SnapshotStore };
   setEnabled(next: boolean): Promise<void>;
   reset(): Promise<void>;
+  setVisionEnabled(next: boolean): Promise<void>;
+  resetVision(): Promise<void>;
 }
 
 /** Props the card component receives from the slot dispatch. */
@@ -137,6 +153,8 @@ interface ModelRouterCardProps {
   useModelRouterCard<T>(selector: (snapshot: ScopeSnapshot) => T): T;
   setEnabled(next: boolean): Promise<void>;
   reset(): Promise<void>;
+  setVisionEnabled(next: boolean): Promise<void>;
+  resetVision(): Promise<void>;
 }
 
 /**
@@ -178,6 +196,24 @@ class ModelRouterCardController {
           // See setEnabled.
         }
       },
+      // Vision toggle merges into the current user-layer vision object so the
+      // provider/model base fields survive the write; reset drops the whole
+      // vision key from the user layer, restoring the schema defaults.
+      setVisionEnabled: async (next) => {
+        try {
+          const current = this.scope.getSnapshot().value?.vision;
+          await this.scope.set("vision", { ...(current ?? {}), enabled: next });
+        } catch {
+          // See setEnabled.
+        }
+      },
+      resetVision: async () => {
+        try {
+          await this.scope.unset("vision");
+        } catch {
+          // See setEnabled.
+        }
+      },
     };
   }
 
@@ -202,16 +238,18 @@ function modeLabel(t: (key: string) => string, mode: string): string {
 
 /**
  * Render the model router card: the live `enabled` switch, an "overridden"
- * badge and reset button when the user layer overrides `enabled`, and
- * read-only route lines. Away from a loopback browser the scope is
- * read-only (`writable` false / `mode` not "host"); the card then shows the
- * unavailable note instead of controls.
+ * badge and reset button when the user layer overrides `enabled`, a Vision
+ * routing section (v0.6.0+) with its own live switch and reset, and read-only
+ * route lines. Away from a loopback browser the scope is read-only
+ * (`writable` false / `mode` not "host"); the card then shows the unavailable
+ * note instead of controls.
  */
 function ModelRouterCard(props: ModelRouterCardProps) {
   const { t } = props;
   const state = props.useModelRouterCard((snapshot) => snapshot);
   const unavailable = !state.writable || state.mode !== "host";
   const overridden = state.user?.enabled !== undefined;
+  const visionOverridden = state.user?.vision !== undefined;
 
   return createElement("section", { style: styles.card }, [
     createElement("div", { style: styles.headRow }, [
@@ -244,6 +282,35 @@ function ModelRouterCard(props: ModelRouterCardProps) {
                   t("reset"),
                 )
               : null,
+            createElement("div", { style: styles.vision }, [
+              createElement("div", { style: styles.switchRow }, [
+                createElement("label", { htmlFor: "model-router-vision", style: styles.label }, t("visionSwitch")),
+                createElement("input", {
+                  id: "model-router-vision",
+                  type: "checkbox",
+                  checked: Boolean(state.value.vision?.enabled),
+                  onChange: (event: { currentTarget: { checked: boolean } }) => {
+                    void props.setVisionEnabled(event.currentTarget.checked);
+                  },
+                  style: styles.switch,
+                }),
+                createElement("span", { style: styles.status }, state.value.vision?.enabled ? t("on") : t("off")),
+              ]),
+              createElement("p", { style: styles.hint }, t("visionDesc")),
+              visionOverridden
+                ? createElement(
+                    "button",
+                    { type: "button", style: styles.reset, onClick: () => void props.resetVision() },
+                    t("visionReset"),
+                  )
+                : null,
+              createElement("dl", { style: styles.routes }, [
+                routeRow(
+                  t("visionRoute"),
+                  `${state.value.vision?.model ?? "—"} · ${state.value.vision?.provider ?? "—"}`,
+                ),
+              ]),
+            ]),
             createElement("dl", { style: styles.routes }, [
               routeRow(t("plannerRoute"), state.value.planner?.model ?? "—"),
               routeRow(t("executorRoute"), state.value.executor?.model ?? "—"),
@@ -344,6 +411,11 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: "6px",
+  },
+  vision: {
+    margin: "4px 0 0",
+    padding: "12px 0 0",
+    borderTop: "1px solid var(--dsw-alias-border-l2)",
   },
   routeRow: {
     display: "flex",

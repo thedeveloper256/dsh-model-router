@@ -22,7 +22,7 @@ import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
 import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { effortFor, recentStepsHadError, roleFor, routeFor, type RouterConfig } from "./policy.js";
+import { effortFor, hasImageContent, recentStepsHadError, roleFor, routeFor, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
 const name = "model-router";
@@ -36,6 +36,18 @@ const ModelRouteSchema = z.object({
   escalateOnError: z.boolean(),
   escalateTo: z.union(["off", "low", "high", "max"]),
   recoverySteps: z.number().min(1),
+});
+
+/**
+ * Opt-in vision route. Defaults are OFF on `deepseek-v4-flash-vision-exp` from
+ * `deepseek-official`; `reasoningEffort` and `maxTokens` are optional pins.
+ */
+const VisionRouteSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: z.string().min(1).default("deepseek-official"),
+  model: z.string().min(1).default("deepseek-v4-flash-vision-exp"),
+  reasoningEffort: z.union(["off", "low", "high", "max"]),
+  maxTokens: z.number().min(1),
 });
 
 /** The plugin's public config, validated at row load. */
@@ -52,6 +64,7 @@ const Config = z.object({
   enabled: z.boolean().default(true),
   promptSection: z.boolean().default(true),
   skill: z.boolean().default(true),
+  vision: VisionRouteSchema.default({} as never),
 });
 
 /** Settings namespace the live on/off toggle lives under (settings.yaml). */
@@ -72,6 +85,7 @@ function resolveConfig(raw: unknown): RouterConfig {
     enabled: parsed.enabled,
     promptSection: parsed.promptSection,
     skill: parsed.skill,
+    vision: parsed.vision,
   };
 }
 
@@ -81,7 +95,7 @@ function resolveConfig(raw: unknown): RouterConfig {
  */
 const SECTION_ORDER = -50;
 
-const SECTION_TEXT = `Model routing is role-based. Planning runs on {PLANNER_MODEL}; implementation runs on {EXECUTOR_MODEL}. You are the root agent: plan, design, review subagent output, and write the final answer here. Delegate implementation — writing code, running commands, builds, tests — to subagents with complete, self-contained prompts, preferring background delegation for independent work. Keep plans and replies concise. Do not hand-write large amounts of code or run long executions here; delegate instead.`;
+const SECTION_TEXT = `Model routing is role-based. Planning runs on {PLANNER_MODEL}; implementation runs on {EXECUTOR_MODEL}. You are the root agent: plan, design, review subagent output, and write the final answer here. Delegate implementation — writing code, running commands, builds, tests — to subagents with complete, self-contained prompts, preferring background delegation for independent work. Keep plans and replies concise. Do not hand-write large amounts of code or run long executions here; delegate instead.{VISION_LINE}`;
 
 const SKILL_NAME = "pro-flash-routing";
 
@@ -214,6 +228,24 @@ class ModelRouter extends Service {
           const resolved = await next();
           const cfg = this.source();
           if (!cfg.enabled) return resolved;
+          // Vision branch FIRST: any request whose messages carry image
+          // content is stamped with the vision model, regardless of role.
+          // The harness's own model-selection listener has already run
+          // (`await next()`), so this rewrite wins over the session model.
+          if (
+            cfg.vision.enabled &&
+            hasImageContent((resolved as { messages?: unknown }).messages)
+          ) {
+            const stamped: Record<string, unknown> = {
+              ...resolved,
+              provider: cfg.vision.provider,
+              model: cfg.vision.model,
+            };
+            if (cfg.vision.maxTokens !== undefined) stamped.maxTokens = cfg.vision.maxTokens;
+            const effort = effortFor(cfg.vision, agent.session?.events);
+            if (effort !== undefined) stamped.reasoningEffort = effort;
+            return stamped;
+          }
           const route = routeFor(agent, cfg, isPlanModeActive(agent));
           if (route === undefined) return resolved;
           const stamped: Record<string, unknown> = {
@@ -270,10 +302,14 @@ class ModelRouter extends Service {
       this.promptDispose = this.harness.systemPrompt.section({
         name: ROW_ID,
         order: SECTION_ORDER,
-        text: SECTION_TEXT.replaceAll("{PLANNER_MODEL}", cfg.planner.model).replaceAll(
-          "{EXECUTOR_MODEL}",
-          cfg.executor.model,
-        ),
+        text: SECTION_TEXT.replaceAll("{PLANNER_MODEL}", cfg.planner.model)
+          .replaceAll("{EXECUTOR_MODEL}", cfg.executor.model)
+          .replace(
+            "{VISION_LINE}",
+            cfg.vision.enabled
+              ? ` Image-bearing requests route to ${cfg.vision.model}.`
+              : "",
+          ),
       });
     }
     if (cfg.skill) {
@@ -293,6 +329,7 @@ export {
   ModelRouter,
   ModelRouter as default,
   SETTINGS_NS,
+  VisionRouteSchema,
   name,
   ROW_ID,
   SKILL_CONTENT,
@@ -300,6 +337,7 @@ export {
   SKILL_NAME,
   SKILL_WHEN_TO_USE,
   effortFor,
+  hasImageContent,
   recentStepsHadError,
   roleFor,
   routeFor,
@@ -310,4 +348,5 @@ export type {
   ReasoningEffort,
   RoutingMode,
   RouterConfig,
+  VisionRoute,
 } from "./policy.js";

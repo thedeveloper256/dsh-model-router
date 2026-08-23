@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.6.0
+
+- **Vision routing** (opt-in, default off): when `vision.enabled` is on, any
+  request whose messages carry image content is stamped with the vision model
+  (`deepseek-v4-flash-vision-exp` on `deepseek-official`), from **every role** —
+  root agent and subagents alike. Everything else keeps the pro/flash role
+  routing untouched. Optional `vision.reasoningEffort` / `vision.maxTokens`
+  pins behave like the per-role ones.
+- **Bundle patch**: the plugin's `cordis.patch.yml` now also ships (a) a
+  catalog entry for the vision model with `inputModalities: [text, image]` on
+  `llm-deepseek` (plus restated pro/flash rows) and (b) raised
+  `attachment-local` image admission limits (`maxImageDimension: 8192`,
+  `maxImagePixels: 100000000`, `maxImageBytes: 15728640`) so normal screenshots
+  attach. Override both in the profile layer, which applies after the plugin
+  layer.
+- **GUI**: the "Model router" card gains a Vision section — its own live
+  switch, a reset affordance, and a read-only route line — alongside the
+  unchanged main `enabled` switch.
+- The prompt section gains a conditional line naming the vision model when
+  vision routing is enabled.
+
 ## v0.5.0
 
 - **Browser half**: the package now ships a client bundle the harness serves
