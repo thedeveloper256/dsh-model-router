@@ -37,25 +37,26 @@
         skill: true
 # Vision support: the catalog must list the vision model with image input, and
 # image admission limits are raised so normal screenshots (~8K, 15MB) attach.
-- patch:
-    - id: llm-deepseek
-      config:
-        models:
-          - id: deepseek-v4-flash
-            name: DeepSeek-V4-Flash
-            contextWindow: 1000000
-            maxTokens: 256000
-          - id: deepseek-v4-pro
-            name: DeepSeek-V4-Pro
-            contextWindow: 1000000
-            maxTokens: 256000
-          - id: deepseek-v4-flash-vision-exp
-            name: DeepSeek-V4-Flash-Vision-Exp
-            contextWindow: 1000000
-            maxTokens: 256000
-            inputModalities: [text, image]
-    - id: attachment-local
-      config:
-        maxImageDimension: 8192
-        maxImagePixels: 100000000
-        maxImageBytes: 15728640
+# Direct id-targeted entries (same shape as a profile cordis.patch.yml): they
+# replace the targeted row's whole config.
+- id: llm-deepseek
+  config:
+    models:
+      - id: deepseek-v4-flash
+        name: DeepSeek-V4-Flash
+        contextWindow: 1000000
+        maxTokens: 256000
+      - id: deepseek-v4-pro
+        name: DeepSeek-V4-Pro
+        contextWindow: 1000000
+        maxTokens: 256000
+      - id: deepseek-v4-flash-vision-exp
+        name: DeepSeek-V4-Flash-Vision-Exp
+        contextWindow: 1000000
+        maxTokens: 256000
+        inputModalities: [text, image]
+- id: attachment-local
+  config:
+    maxImageDimension: 8192
+    maxImagePixels: 100000000
+    maxImageBytes: 15728640
