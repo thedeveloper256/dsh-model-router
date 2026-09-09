@@ -100,8 +100,11 @@ subagents. Everything else keeps the pro/flash role routing untouched. The
 vision branch is checked first, so a subagent reading an image still lands on
 the vision model, not on flash. Optional `vision.reasoningEffort` /
 `vision.maxTokens` pins work exactly like the per-role ones. Image detection
-reads the session log: any user message or tool result carrying an image keeps
-the session on the vision model while that image is in context.
+reads the session event log (`user/message`, `assistant/message`, and
+`tool/result`, including images nested in `tool-result` blocks): once an image
+appears anywhere in the log, subsequent requests stay on the vision model for
+the rest of the session (sticky — the image stays in request context until
+compaction or pruning drops it).
 
 The plugin ships the support in its own `cordis.patch.yml`:
 

@@ -1,3 +1,9 @@
+## v0.6.3
+
+- Fix `sessionHasImage` missing `tool/result` events: tool screenshots now route to vision (shapes verified against harness `SessionEventMap`; robust `data.message.content ?? data.content` extraction).
+- Add testable `shouldUseVision(events, vision)` wiring helper; `agent/request` uses it; re-export `sessionHasImage` + `shouldUseVision` from the public entry.
+- Clarify sticky vision in README and code comments (entire-log scan until compaction/pruning) and mark `hasImageContent` deprecated (payload never carries `messages`).
+
 ## v0.6.2
 
 - Fix vision routing never firing: the `agent/request` waterfall payload does

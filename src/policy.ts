@@ -192,6 +192,9 @@ export function effortFor(
  * an `image` block, directly or nested inside a `tool-result` block (tool
  * results may embed the images they produced). String content never does.
  *
+ * @deprecated Superseded by {@link sessionHasImage} (v0.6.2): the
+ * `agent/request` waterfall payload never carries `messages`, so production
+ * routing reads the session event log instead. Kept for backward compat.
  * @param messages - the request's `messages` array (any runtime shape).
  * @returns true when at least one message contains image content.
  */
@@ -209,14 +212,23 @@ export function hasImageContent(messages: unknown): boolean {
  * Whether the agent's session log carries any image content.
  *
  * The `agent/request` waterfall payload never includes `messages`, so vision
- * detection reads the session event log instead: a `user/message` event's data
- * IS the message (content at `data.content`), an `assistant/message` event's
- * content lives at `data.message.content`, and both may nest images inside
- * `tool-result` blocks. Once an image is in the conversation it stays in the
- * request context, so one image anywhere in the log routes vision.
+ * detection reads the session event log instead. Shapes mirror the harness
+ * `SessionEventMap` (`@deepseek-ai/dsh-session`):
+ * - `user/message` event's data IS the `UserMessage` (content at `data.content`),
+ * - `assistant/message` content lives at `data.message.content` (`AssistantMessage`),
+ * - `tool/result` content lives at `data.message.content` (`ToolResultMessage`,
+ *   a single-element `[ToolResultBlock]` whose nested `content` may hold images).
+ * Blocks may also nest images inside `tool-result` blocks. Extraction tries
+ * `data.message.content` first, then `data.content`, so minor harness shape
+ * drift still detects rather than silently missing.
+ *
+ * Sticky by design: one image anywhere in the log routes vision for the rest
+ * of the session, because the image stays in request context until compaction
+ * or pruning drops it. The scan is O(N) per request from the tail (early exit
+ * on hit); text-only sessions scan the full log, which is fine at session scale.
  *
  * @param events - the agent's session event log (or `undefined`).
- * @returns true when any user or assistant message carries image content.
+ * @returns true when any user, assistant, or tool-result message carries image content.
  */
 export function sessionHasImage(events: readonly unknown[] | undefined): boolean {
   if (!Array.isArray(events)) return false;
@@ -224,14 +236,46 @@ export function sessionHasImage(events: readonly unknown[] | undefined): boolean
     const event = events[i] as
       | { type?: string; data?: { content?: unknown; message?: { content?: unknown } } }
       | undefined;
-    if (event?.type !== "user/message" && event?.type !== "assistant/message") continue;
+    if (
+      event?.type !== "user/message" &&
+      event?.type !== "assistant/message" &&
+      event?.type !== "tool/result"
+    )
+      continue;
+    // Robust extraction: prefer the wrapped message shape, fall back to direct.
     const content = event.data?.message?.content ?? event.data?.content;
     if (Array.isArray(content) && blocksContainImage(content)) return true;
   }
   return false;
 }
 
-/** Whether any block (or nested tool-result content) is an image block. */
+/**
+ * Whether a request should take the vision route.
+ *
+ * Pure, testable wiring helper for the `agent/request` listener in
+ * `src/index.ts`: vision wins only when explicitly enabled AND the session
+ * log carries an image. Extracted so the gating logic is covered without
+ * spinning up Cordis.
+ *
+ * @param events - the agent's session event log.
+ * @param vision - the resolved vision route (only `enabled` is read).
+ * @returns true when the request must be stamped with the vision model.
+ */
+export function shouldUseVision(
+  events: readonly unknown[] | undefined,
+  vision: Pick<VisionRoute, "enabled"> | undefined,
+): boolean {
+  if (vision?.enabled !== true) return false;
+  return sessionHasImage(events);
+}
+
+/**
+ * Whether any block (or nested tool-result content) is an image block.
+ * Exact `type` matching is intentional: it mirrors the harness
+ * `ContentBlockMap` vocabulary (`@deepseek-ai/dsh-llm`: `text`, `reasoning`,
+ * `image`, `tool-call`, `tool-result`). Provider wire variants (`image_url`,
+ * `input_image`, …) are normalized by adapters before reaching the log.
+ */
 function blocksContainImage(blocks: readonly unknown[]): boolean {
   for (const block of blocks) {
     const candidate = block as { type?: unknown; content?: unknown };
