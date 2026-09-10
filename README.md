@@ -46,6 +46,15 @@ Everything else is a planner. That logic lives in `src/policy.ts` as a plain fun
 
 The router always stamps `provider` + `model`. `reasoningEffort` and `maxTokens` are *optional per role*: set them in the config and they're enforced for that role; leave them out and those fields inherit from your session's selection. So picking "max effort" in the UI but not pinning `reasoningEffort` in the config still gives you max-effort thinking — it just happens on the routed model.
 
+### What still differs while the models are unified
+
+With both routes on `deepseek-flash`, the model stamp is a pass-through — but the roles are not identical:
+
+- **Effort and token pins are per role.** Planner `high` + executor `low`, for example, genuinely behaves and costs differently per role today.
+- **The convention still steers behavior.** The prompt section and skill keep the root agent planning and delegating instead of doing everything itself, regardless of model.
+- **Enforcement still pins the model.** Every request lands on `deepseek-flash` no matter what the session or UI selects.
+- **The split is parked, not removed.** When V4.1-Pro launches, pointing the planner route at it restores the two-model setup with a one-line change.
+
 ## Turning the router off
 
 Routing is on by default. Two ways to switch it off:
@@ -100,9 +109,11 @@ When enabled, **any request sent while the session log carries an image is stamp
 vision model** — `deepseek-flash` from `deepseek-official` by
 default (V4.1 Flash is natively multimodal, so this matches the role routes
 unless you pin something else) — **from every role**: the root (planner) agent and all delegated
-subagents. Everything else keeps the pro/flash role routing untouched. The
-vision branch is checked first, so a subagent reading an image still lands on
-the vision model, not on flash. Optional `vision.reasoningEffort` /
+subagents. Everything else keeps the role routing untouched. The
+vision branch is checked first, so an image-bearing request lands on the
+vision model even when it comes from a subagent. With the default config the
+vision model is the same `deepseek-flash` as the role routes, so the branch
+is a no-op until you pin a different vision model. Optional `vision.reasoningEffort` /
 `vision.maxTokens` pins work exactly like the per-role ones. Image detection
 reads the session event log (`user/message`, `assistant/message`, and
 `tool/result`, including images nested in `tool-result` blocks): once an image
@@ -158,11 +169,11 @@ All configuration lives on the plugin row. Patch it in the profile's `cordis.pat
         skill: true         # register the pro-flash-routing skill
 ```
 
-`mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving pro for real planning.
+`mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving the planner route for real planning.
 
 **Error-driven escalation** (`escalateOnError`): when a route's agent hits a failed tool step, the *next* request bumps to `escalateTo` and wears off after `recoverySteps` clean steps. It's deterministic and stateless — the router folds the session log per request, so only prior steps are considered (a failure can't escalate the very request that caused it). It's a per-route knob: enable it on the executor to make flash think harder after a flubbed execution step, without touching the baseline.
 
-The defaults are exactly the list at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
+The model defaults are exactly the two routes at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`. If even the convention surface is unwanted until V4.1-Pro lands, flip `enabled` off (see above) and leave the plugin installed — everything unregisters and you flip it back on later.
 
 ## Reduce token usage
 
