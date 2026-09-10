@@ -176,14 +176,27 @@ The first three are one-line changes on this plugin's row; the last three are di
 
 ## Does it work?
 
-I verified it against a real session log. Run a task that makes the agent plan and delegate, then check which models actually made the requests:
+I verified it against real session logs. Run a task that makes the agent plan and delegate, then check which models actually made the requests:
 
 ```bash
 zstd -d -c "$DSH_HOME"/sessions/<workspace>/<session>/session.jsonl.zstd \
-  | grep -o '"model":"deepseek-v4-[a-z]*"' | sort | uniq -c
+  | grep '"type":"assistant/message"' \
+  | grep -o '"model":"deepseek-v4-[a-z-]*"' | sort | uniq -c
 ```
 
-Planner messages come back as `deepseek-v4-pro`; subagent messages as `deepseek-v4-flash`. In my test: 9 pro requests in the planner's session, 6 flash in the subagent's.
+Two details matter in that command: filtering to `assistant/message` counts only real model responses
+(the raw log also records `request/header`, session-title, and web-search calls, which would inflate
+the numbers), and the `[a-z-]*` pattern keeps vision model names (`deepseek-v4-flash-vision-exp`)
+intact — a plain `[a-z]*` silently truncates them to `deepseek-v4-flash`.
+
+Planner messages come back as `deepseek-v4-pro`; subagent messages as `deepseek-v4-flash`. Re-verified
+against production logs: a root session with delegations shows 170 pro / 182 flash responses, and every
+child session (`delegationDepth >= 1`) shows flash only. With vision routing enabled, an image-heavy
+session logged 508 `deepseek-v4-flash-vision-exp` responses.
+
+One operational note: the routing rewrite is loaded at harness boot. After updating the plugin (e.g.
+0.6.2 → 0.6.3), restart the profile — a session that keeps running across the update can keep behaving
+per the old code until the process reloads.
 
 ## Development
 
