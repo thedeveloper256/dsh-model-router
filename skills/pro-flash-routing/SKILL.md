@@ -6,15 +6,15 @@ whenToUse: Use when a task combines planning and implementation: before writing 
 
 # Pro planner / Flash executor routing
 
-This session routes models by role:
+This session routes models by role (both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
 
-- **Planner (this agent)** — `deepseek-v4-pro`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
-- **Executors (every subagent)** — `deepseek-v4-flash`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
+- **Planner (this agent)** — `deepseek-flash`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
+- **Executors (every subagent)** — `deepseek-flash`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
 
 ## Working rhythm
 
 1. **Plan here.** Explore, decide the approach, and (when plan mode is on) submit the plan with `exit_plan_mode`. The plan stays on this agent.
-2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to `deepseek-v4-flash`, so keep them execution-focused: give them the decision, not the decision to make.
+2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to `deepseek-flash`, so keep them execution-focused: give them the decision, not the decision to make.
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
 
@@ -31,5 +31,5 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 
 ## Verification
 
-- Executor output was produced by `deepseek-v4-flash`; planner output by `deepseek-v4-pro`. If you need to confirm, check the session log's model metadata.
+- Both roles produce `deepseek-flash` output (unified since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the `model-router` plugin row in the profile composition is the single place that owns it.
