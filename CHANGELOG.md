@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0
+
+- **V4.1 Flash (`deepseek-flash`, 2026-09-10)**: planner, executor, and vision
+  defaults all move to `deepseek-flash` (native multimodal, 1M context, 384K
+  max output). `deepseek-v4-pro` / `deepseek-v4-flash` /
+  `deepseek-v4-flash-vision-exp` are retired server-side (all route to V4.1
+  Flash; `deepseek-v4-pro` follows on Sep 14, 2026) — the role split stays in
+  the config so the planner flips back with a one-line change when V4.1-Pro
+  launches. Vision routing is now a no-op by default (same model) and kept
+  for explicitness and the future split.
+- **Bundle patch**: `llm-deepseek` catalog lists `deepseek-flash` with
+  `inputModalities: [text, image]` and corrected `maxTokens: 384000` (was
+  256000 from the v4 preview docs); retired v4 ids kept as compat aliases.
+- Prompt section, `pro-flash-routing` skill, GUI card copy, README, and tests
+  updated for the unified default.
+
 ## v0.6.3
 
 - Fix `sessionHasImage` missing `tool/result` events: tool screenshots now route to vision (shapes verified against harness `SessionEventMap`; robust `data.message.content ?? data.content` extraction).

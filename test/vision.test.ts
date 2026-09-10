@@ -186,7 +186,7 @@ describe("sessionHasImage harness fidelity (review Issue 1)", () => {
               { type: "text", text: "here" },
               { type: "image", attachment: { bytes: "abc" } },
             ],
-            source: { provider: "deepseek-official", model: "deepseek-v4-pro", kind: "model" },
+            source: { provider: "deepseek-official", model: "deepseek-flash", kind: "model" },
           },
         },
       },
@@ -249,6 +249,6 @@ describe("Config vision defaults", () => {
   });
 
   it("defaults vision.model to the vision model", () => {
-    expect(Config({}).vision.model).toBe("deepseek-v4-flash-vision-exp");
+    expect(Config({}).vision.model).toBe("deepseek-flash");
   });
 });

@@ -2,10 +2,10 @@
 
 A small plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) that stops treating every model call the same. It splits your session into two roles:
 
-- **The planner** — your main agent — always runs on `deepseek-v4-pro`. That's where the thinking happens: understanding what you want, designing the approach, reviewing results, writing the final answer.
-- **The executors** — every subagent it delegates to — always run on `deepseek-v4-flash`. That's where the work happens: writing code, running commands, iterating on builds.
+- **The planner** — your main agent — defaults to `deepseek-flash` (V4.1 Flash, native multimodal). That's where the thinking happens: understanding what you want, designing the approach, reviewing results, writing the final answer.
+- **The executors** — every subagent it delegates to — default to `deepseek-flash` as well.
 
-The idea is simple: pro is the better thinker, flash is fast and cheap at grinding through implementation. You get the careful planning of the big model without paying pro prices for every single tool call.
+Both roles share the same model until V4.1-Pro launches (V4.1 Flash already beats V4-Pro on performance, cost, and speed, so DeepSeek is retiring `deepseek-v4-pro` / `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` — all three now route to V4.1 Flash server-side). The role split stays in the config, so flipping the planner back to Pro later is a one-line change. You keep the careful plan/delegate/review rhythm without paying Pro prices for every tool call.
 
 ## Install
 
@@ -29,7 +29,7 @@ Once it's in, restart the profile. You should see the row under `model-router` i
 
 Three small surfaces, one rule:
 
-1. **Request routing** — every model request gets stamped with a role. Root agents get `deepseek-v4-pro`; delegation children (`subagent`, `subagent_fork`, workflow workers, ralph rounds) get `deepseek-v4-flash`. The rewrite sits at the outermost layer of the request pipeline, so it wins — even over the harness's own default model (which is `deepseek-v4-flash` out of the box) and over whatever model you pick in the UI for the session. That's intentional: it's the "enforce" knob.
+1. **Request routing** — every model request gets stamped with a role. Root agents get the planner route; delegation children (`subagent`, `subagent_fork`, workflow workers, ralph rounds) get the executor route. Both default to `deepseek-flash` (V4.1 Flash) until V4.1-Pro launches, so today the stamp unifies while the role split stays configurable. The rewrite sits at the outermost layer of the request pipeline, so it wins — even over the harness's own default model and over whatever model you pick in the UI for the session. That's intentional: it's the "enforce" knob.
 2. **A prompt section** — a short note that renders before the agent's persona, telling the planner: you're the thinker, delegate the implementation. Without this, the model tends to just do everything itself.
 3. **A skill** — the `pro-flash-routing` skill shows up in the session's skill catalog and spells out the working rhythm: plan, delegate, review, report. Same convention, but loadable on demand when the agent wants details.
 
@@ -97,8 +97,9 @@ and off by default** (`vision.enabled: false`). Two ways to turn it on:
 - **Patch row / settings:** set `vision.enabled: true` on the plugin's config.
 
 When enabled, **any request sent while the session log carries an image is stamped with the
-vision model** — `deepseek-v4-flash-vision-exp` from `deepseek-official` by
-default — **from every role**: the root (planner) agent and all delegated
+vision model** — `deepseek-flash` from `deepseek-official` by
+default (V4.1 Flash is natively multimodal, so this matches the role routes
+unless you pin something else) — **from every role**: the root (planner) agent and all delegated
 subagents. Everything else keeps the pro/flash role routing untouched. The
 vision branch is checked first, so a subagent reading an image still lands on
 the vision model, not on flash. Optional `vision.reasoningEffort` /
@@ -110,15 +111,17 @@ the rest of the session (sticky — the image stays in request context until
 compaction or pruning drops it). Detection shapes are verified against real
 session logs: `user/message` carries the image at `data.content`, while
 `assistant/message` and `tool/result` carry it at `data.message.content`
-(tool results nest it inside a `tool-result` block). Coming in v0.7.0:
-optional `vision.historyLimit` bounds the scan to the trailing N events
+(tool results nest it inside a `tool-result` block). Possible follow-up:
+optional `vision.historyLimit` to bound the scan to the trailing N events
 (unset keeps today's sticky entire-log scan).
 
 The plugin ships the support in its own `cordis.patch.yml`:
 
-- a **catalog entry** for the vision model on the `llm-deepseek` row (with
-  `inputModalities: [text, image]`, plus raised `contextWindow`/`maxTokens`
-  restated for the pro/flash rows), and
+- a **catalog entry** for `deepseek-flash` on the `llm-deepseek` row (with
+  `inputModalities: [text, image]`, `contextWindow: 1000000`, `maxTokens:
+  384000`), plus the retired `deepseek-v4-flash` / `deepseek-v4-pro` /
+  `deepseek-v4-flash-vision-exp` ids kept as compat aliases through the
+  transition, and
 - **raised `attachment-local` image admission limits** so normal screenshots
   (~8K, 15MB) attach without being rejected (`maxImageDimension: 8192`,
   `maxImagePixels: 100000000`, `maxImageBytes: 15728640`).
@@ -138,14 +141,14 @@ All configuration lives on the plugin row. Patch it in the profile's `cordis.pat
 - patch:
     - id: model-router
       config:
-        planner:            # root-agent route
+        planner:            # root-agent route (deepseek-flash until V4.1-Pro lands)
           provider: deepseek-official
-          model: deepseek-v4-pro
+          model: deepseek-flash
           reasoningEffort: high   # off | low | high | max (omit to inherit)
           maxTokens: 8192         # output cap (omit to inherit)
         executor:           # subagent route
           provider: deepseek-official
-          model: deepseek-v4-flash
+          model: deepseek-flash
           reasoningEffort: high
           escalateOnError: true   # after a failed step…
           escalateTo: max         #   …bump effort for the next request
@@ -161,13 +164,14 @@ All configuration lives on the plugin row. Patch it in the profile's `cordis.pat
 
 The defaults are exactly the list at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
 
-## Reduce pro token usage
+## Reduce token usage
 
-The planner is the expensive model, so most of the savings come from shrinking its spend:
+With both roles on `deepseek-flash`, the bill is already far below the old
+pro-based setup — most of the remaining savings come from shrinking spend:
 
-- **Lower `reasoningEffort`.** The harness default runs pro at `max`, which produces a lot of reasoning tokens. `high` (or `low`) on the planner route keeps most of the quality at a fraction of the cost.
+- **Lower `reasoningEffort`.** The harness default runs at `max`, which produces a lot of reasoning tokens. `high` (or `low`) on a route keeps most of the quality at a fraction of the cost.
 - **Cap output** with `maxTokens` on the planner route so a verbose turn can't balloon.
-- **Reserve pro for planning** with `mode: plan` — trivial Q&A and execution-style turns stop hitting pro at all.
+- **Reserve the planner route for planning** with `mode: plan` — trivial Q&A and execution-style turns stop hitting the planner route at all (matters again once V4.1-Pro lands and the routes split).
 - **Keep the planner's context lean.** Input tokens dominate after reasoning. Delegate aggressively and trust the subagent's report; don't re-read big files or full transcripts on the planner. Use targeted reads and let auto-compaction (`/compact`) trim history.
 - **Tune the host pruner.** The tool-result pruner truncates oversized results before they reach the model (default ~8 KB); lowering `tool-result-pruner` → `thresholdChars` trims more planner input. That's harness config, not this plugin's row.
 - **Exploit DeepSeek's context cache.** Repeated prefixes are served from cache at a big discount, so keep the system prompt and conversation prefix stable between turns.
@@ -176,26 +180,29 @@ The first three are one-line changes on this plugin's row; the last three are di
 
 ## Does it work?
 
-I verified it against real session logs. Run a task that makes the agent plan and delegate, then check which models actually made the requests:
+Verify against a real session log. Run a task that makes the agent plan and delegate, then check which models actually made the requests:
 
 ```bash
 zstd -d -c "$DSH_HOME"/sessions/<workspace>/<session>/session.jsonl.zstd \
   | grep '"type":"assistant/message"' \
-  | grep -o '"model":"deepseek-v4-[a-z-]*"' | sort | uniq -c
+  | grep -o '"model":"deepseek-[a-z-]*"' | sort | uniq -c
 ```
 
 Two details matter in that command: filtering to `assistant/message` counts only real model responses
 (the raw log also records `request/header`, session-title, and web-search calls, which would inflate
-the numbers), and the `[a-z-]*` pattern keeps vision model names (`deepseek-v4-flash-vision-exp`)
-intact — a plain `[a-z]*` silently truncates them to `deepseek-v4-flash`.
+the numbers), and the `[a-z-]*` pattern keeps hyphenated model names
+(`deepseek-flash`, legacy `deepseek-v4-flash-vision-exp`) intact — a plain
+`[a-z]*` silently truncates them.
 
-Planner messages come back as `deepseek-v4-pro`; subagent messages as `deepseek-v4-flash`. Re-verified
-against production logs: a root session with delegations shows 170 pro / 182 flash responses, and every
-child session (`delegationDepth >= 1`) shows flash only. With vision routing enabled, an image-heavy
-session logged 508 `deepseek-v4-flash-vision-exp` responses.
+Since v0.7.0 both roles log `deepseek-flash` (unified until V4.1-Pro lands and
+the planner route points at it). For reference, the v4-era split re-verified
+against production logs: a root session with delegations showed 170 pro / 182
+flash responses, and every child session (`delegationDepth >= 1`) showed flash
+only; with vision routing enabled, an image-heavy session logged 508
+`deepseek-v4-flash-vision-exp` responses.
 
 One operational note: the routing rewrite is loaded at harness boot. After updating the plugin (e.g.
-0.6.2 → 0.6.3), restart the profile — a session that keeps running across the update can keep behaving
+0.6.3 → 0.7.0), restart the profile — a session that keeps running across the update can keep behaving
 per the old code until the process reloads.
 
 ## Development

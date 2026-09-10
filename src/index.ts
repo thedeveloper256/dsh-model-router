@@ -1,11 +1,13 @@
 /**
  * dsh-model-router: role-based model routing for the DeepSeek Harness.
  *
- * The planner (the session's root agent) runs on `deepseek-v4-pro`; delegated
- * executor subagents run on `deepseek-v4-flash`. Enforcement is a per-agent
- * `agent/request` rewrite registered when the agent is created, so it applies
- * in every mode (web / headless / tui) and every agent preset, including
- * subagents the delegation tools create.
+ * Both roles default to `deepseek-flash` (V4.1 Flash, native multimodal):
+ * the planner (the session's root agent) and delegated executor subagents
+ * share the same model until V4.1-Pro launches, at which point the planner
+ * route can be flipped back with a one-line config change. Enforcement is a
+ * per-agent `agent/request` rewrite registered when the agent is created, so
+ * it applies in every mode (web / headless / tui) and every agent preset,
+ * including subagents the delegation tools create.
  *
  * Each role route may also pin `reasoningEffort` and `maxTokens`; when set,
  * they override the session's selection for that role. A `mode` switch lets a
@@ -39,13 +41,16 @@ const ModelRouteSchema = z.object({
 });
 
 /**
- * Opt-in vision route. Defaults are OFF on `deepseek-v4-flash-vision-exp` from
- * `deepseek-official`; `reasoningEffort` and `maxTokens` are optional pins.
+ * Opt-in vision route. Defaults to `deepseek-flash` (V4.1 Flash, native
+ * multimodal) from `deepseek-official`; `reasoningEffort` and `maxTokens`
+ * are optional pins. Native multimodal makes the vision branch a no-op when
+ * the role routes already point at the same model — kept for explicitness
+ * and for a future V4.1-Pro split.
  */
 const VisionRouteSchema = z.object({
   enabled: z.boolean().default(false),
   provider: z.string().min(1).default("deepseek-official"),
-  model: z.string().min(1).default("deepseek-v4-flash-vision-exp"),
+  model: z.string().min(1).default("deepseek-flash"),
   reasoningEffort: z.union(["off", "low", "high", "max"]),
   maxTokens: z.number().min(1),
 });
@@ -54,11 +59,11 @@ const VisionRouteSchema = z.object({
 const Config = z.object({
   planner: ModelRouteSchema.default({
     provider: "deepseek-official",
-    model: "deepseek-v4-pro",
+    model: "deepseek-flash",
   } as never),
   executor: ModelRouteSchema.default({
     provider: "deepseek-official",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
   } as never),
   mode: z.union(["strict", "plan"]).default("strict"),
   enabled: z.boolean().default(true),
@@ -106,15 +111,15 @@ const SKILL_WHEN_TO_USE = `Use when a task combines planning and implementation:
 
 const SKILL_CONTENT = `# Pro planner / Flash executor routing
 
-This session routes models by role:
+This session routes models by role (both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
 
-- **Planner (this agent)** — \`deepseek-v4-pro\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
-- **Executors (every subagent)** — \`deepseek-v4-flash\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
+- **Planner (this agent)** — \`deepseek-flash\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
+- **Executors (every subagent)** — \`deepseek-flash\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
 
 ## Working rhythm
 
 1. **Plan here.** Explore, decide the approach, and (when plan mode is on) submit the plan with \`exit_plan_mode\`. The plan stays on this agent.
-2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`deepseek-v4-flash\`, so keep them execution-focused: give them the decision, not the decision to make.
+2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`deepseek-flash\`, so keep them execution-focused: give them the decision, not the decision to make.
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
 
@@ -131,7 +136,7 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 
 ## Verification
 
-- Executor output was produced by \`deepseek-v4-flash\`; planner output by \`deepseek-v4-pro\`. If you need to confirm, check the session log's model metadata.
+- Both roles produce \`deepseek-flash\` (unified since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the \`model-router\` plugin row in the profile composition is the single place that owns it.`;
 
 /** The plugin row id the bundle patch must insert. */
@@ -220,7 +225,7 @@ class ModelRouter extends Service {
       // `prepend` puts this listener OUTERMOST in the `agent/request`
       // waterfall: the harness's model-selection listener runs inside it, so
       // this rewrite is applied LAST and wins over the session's selected
-      // model (which dsh-base defaults to deepseek-v4-flash and the user
+      // model (which dsh-base defaulted to deepseek-v4-flash, now deepseek-flash, and the user
       // settings or UI can change).
       const dispose = agent.ctx.on(
         "agent/request",

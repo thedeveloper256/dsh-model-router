@@ -29,7 +29,7 @@ const en: Record<string, string> = {
   nav: "Model router",
   title: "Model router",
   description:
-    "Role-based model routing: planning runs on deepseek-v4-pro, delegated executor subagents on deepseek-v4-flash.",
+    "Role-based model routing: both roles default to deepseek-flash (V4.1 Flash, native multimodal).",
   enabled: "Enabled",
   enabledHint:
     "Off stops rewriting requests and unregisters the prompt section and skill; on restores them.",
@@ -46,7 +46,7 @@ const en: Record<string, string> = {
   modePlan: "plan — the root agent is pro only while plan mode is active",
   visionTitle: "Vision routing",
   visionDesc:
-    "Opt-in (default off): when enabled, any request containing an image routes to the vision model, from every role; other requests keep the pro/flash routing.",
+    "Opt-in (default off, native on deepseek-flash): when enabled, any request containing an image routes to the vision model, from every role; other requests keep the role routing.",
   visionSwitch: "Vision",
   visionReset: "Reset vision to default",
   visionRoute: "Vision model",
@@ -57,7 +57,7 @@ const zh: Record<string, string> = {
   nav: "模型路由",
   title: "模型路由",
   description:
-    "按角色分配模型：规划在 deepseek-v4-pro 上运行，委派的执行子代理在 deepseek-v4-flash 上运行。",
+    "按角色分配模型：两个角色默认均为 deepseek-flash（V4.1 Flash，原生多模态）。",
   enabled: "启用",
   enabledHint: "关闭后停止改写请求，并注销提示区块与技能；重新打开即恢复。",
   on: "开",
@@ -73,7 +73,7 @@ const zh: Record<string, string> = {
   modePlan: "plan — 根 agent 仅在计划模式激活时使用 pro",
   visionTitle: "视觉路由",
   visionDesc:
-    "可选（默认关闭）：启用后，任何包含图片的请求都会路由到视觉模型，适用于所有角色；其他请求保持 pro/flash 路由。",
+    "可选（默认关闭，deepseek-flash 原生支持）：启用后，任何包含图片的请求都会路由到视觉模型，适用于所有角色；其他请求保持角色路由。",
   visionSwitch: "视觉",
   visionReset: "恢复视觉默认值",
   visionRoute: "视觉模型",
