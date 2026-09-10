@@ -1,3 +1,5 @@
+# Changelog
+
 ## v0.6.3
 
 - Fix `sessionHasImage` missing `tool/result` events: tool screenshots now route to vision (shapes verified against harness `SessionEventMap`; robust `data.message.content ?? data.content` extraction).
@@ -18,8 +20,6 @@
   wrapper was ignored by the loader), so installing the plugin actually adds
   `deepseek-v4-flash-vision-exp` to the catalog and raises image admission
   limits.
-
-# Changelog
 
 ## v0.6.0
 

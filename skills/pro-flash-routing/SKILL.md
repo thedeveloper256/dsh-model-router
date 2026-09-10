@@ -8,7 +8,7 @@ whenToUse: Use when a task combines planning and implementation: before writing 
 
 This session routes models by role:
 
-- **Planner (the root agent)** — `deepseek-v4-pro`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
+- **Planner (this agent)** — `deepseek-v4-pro`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
 - **Executors (every subagent)** — `deepseek-v4-flash`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
 
 ## Working rhythm
@@ -17,6 +17,10 @@ This session routes models by role:
 2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to `deepseek-v4-flash`, so keep them execution-focused: give them the decision, not the decision to make.
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
+
+## Keep this agent's context lean
+
+Input tokens are the expensive part of the planner. Don't re-read large files or full transcripts on this agent — trust the subagent's final report. Prefer targeted reads (offset/limit) over whole files. When the context grows, compact rather than re-sending everything.
 
 ## Delegation guidelines
 
