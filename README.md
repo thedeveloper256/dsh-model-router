@@ -50,7 +50,7 @@ The router always stamps `provider` + `model`. `reasoningEffort` and `maxTokens`
 
 Routing is on by default. Two ways to switch it off:
 
-- **GUI (Settings → Plugins → dsh-model-router):** the plugin registers a live
+- **GUI (Settings → Plugins → Model router):** the plugin registers a live
   settings section; flip `enabled` off. It applies immediately (no restart),
   persists in `settings.yaml` under `model-router:`, and unregisters the prompt
   section and the skill too. Flip it back on and everything returns. The same
@@ -68,15 +68,18 @@ Since v0.5.0 the package ships a browser half, and the harness serves it
 automatically — no extra config. After installing (or updating to) v0.5.0+
 and restarting the profile, **Settings → Plugins** shows a **Model router**
 card with a live **Enabled** switch, an "Overridden" badge and **Reset to
-default** button once you've changed it, and a read-only view of the current
-planner/executor routes and mode. Flipping the switch applies immediately (no
+default** button once you've changed it, a read-only view of the current
+planner/executor routes and mode, and a Vision section (v0.6.0+) with its own
+live **Vision** switch, **Reset vision to default** button, and read-only
+vision-model line. Flipping the switch applies immediately (no
 restart) and persists in `settings.yaml` under `model-router:` — the same
 mechanism the GUI toggle described above uses.
 
 One harness-wide caveat (it applies to **all** settings pages — Models,
 Plugins, everything — not to this plugin specifically): the harness serves
 settings pages only to **loopback** browsers (`localhost` / `127.x`). A remote
-browser sees "settings are unavailable" instead of the card. Fallbacks that
+browser may not get the settings page at all; where the card does render it
+shows a read-only note. Fallbacks that
 work everywhere:
 
 - **Patch row** — set `enabled: false` in the profile's `cordis.patch.yml`
@@ -93,7 +96,7 @@ and off by default** (`vision.enabled: false`). Two ways to turn it on:
   no restart, persists in `settings.yaml`), or
 - **Patch row / settings:** set `vision.enabled: true` on the plugin's config.
 
-When enabled, **any request whose messages carry an image is stamped with the
+When enabled, **any request sent while the session log carries an image is stamped with the
 vision model** — `deepseek-v4-flash-vision-exp` from `deepseek-official` by
 default — **from every role**: the root (planner) agent and all delegated
 subagents. Everything else keeps the pro/flash role routing untouched. The
@@ -104,7 +107,12 @@ reads the session event log (`user/message`, `assistant/message`, and
 `tool/result`, including images nested in `tool-result` blocks): once an image
 appears anywhere in the log, subsequent requests stay on the vision model for
 the rest of the session (sticky — the image stays in request context until
-compaction or pruning drops it).
+compaction or pruning drops it). Detection shapes are verified against real
+session logs: `user/message` carries the image at `data.content`, while
+`assistant/message` and `tool/result` carry it at `data.message.content`
+(tool results nest it inside a `tool-result` block). Coming in v0.7.0:
+optional `vision.historyLimit` bounds the scan to the trailing N events
+(unset keeps today's sticky entire-log scan).
 
 The plugin ships the support in its own `cordis.patch.yml`:
 
@@ -151,7 +159,7 @@ All configuration lives on the plugin row. Patch it in the profile's `cordis.pat
 
 **Error-driven escalation** (`escalateOnError`): when a route's agent hits a failed tool step, the *next* request bumps to `escalateTo` and wears off after `recoverySteps` clean steps. It's deterministic and stateless — the router folds the session log per request, so only prior steps are considered (a failure can't escalate the very request that caused it). It's a per-route knob: enable it on the executor to make flash think harder after a flubbed execution step, without touching the baseline.
 
-The defaults are exactly the table at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
+The defaults are exactly the list at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`.
 
 ## Reduce pro token usage
 
@@ -189,6 +197,19 @@ npm run build
 ```
 
 The `prepare` script builds `lib/` automatically, which is what makes the git install work without shipping build artifacts in the repo. The `dsh.bundle` field in `package.json` is what tells `dsh plugin` how to compose the plugin into a profile.
+
+## Releasing
+
+Pushing a tag alone does not make a release. Every version needs all four:
+
+```bash
+npm run typecheck && npm test && npm run build  # green first
+git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "<CHANGELOG entry>"
+npm publish --access public  # needs login + 2FA (--otp) or a publish token
+```
+
+Keep `vX.Y.Z` flagged as Latest (`gh release edit vX.Y.Z --latest`) when backfilling older ones. Note: `scripts/publish.sh` is a one-shot bootstrap for a brand-new repo, not the per-release path.
 
 ## License
 
