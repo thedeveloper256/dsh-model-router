@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-router",
   "description": "DeepSeek Harness plugin: role-based model routing — both roles default to deepseek-flash (V4.1 Flash, native multimodal) until V4.1-Pro launches.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publishConfig": {
     "access": "public"
   },

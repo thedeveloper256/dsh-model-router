@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.1
+
+- Fix `agent/disposed` listener leak: one global listener fans out via a
+  request-disposer map instead of registering a host listener per agent.
+- Catalog compat aliases `deepseek-v4-flash` / `deepseek-v4-pro` now declare
+  `inputModalities: [text, image]`; patch notes clarify id-targeted rows
+  replace the whole row config.
+- Skill content is templated from the configured routes (`buildSkillContent`,
+  exported) instead of hardcoding model names.
+- Tests: distinct planner/executor model names, router lifecycle coverage
+  (`test/router.test.ts`), partial-route omit-to-inherit regression guards
+  (47 passing).
+
 ## v0.7.0
 
 - **V4.1 Flash (`deepseek-flash`, 2026-09-10)**: planner, executor, and vision
