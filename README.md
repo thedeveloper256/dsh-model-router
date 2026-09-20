@@ -139,7 +139,11 @@ The plugin ships the support in its own `cordis.patch.yml`:
 
 Both are defaults you can override in your **profile**'s `cordis.patch.yml` —
 the profile layer applies after the plugin layer, so a `patch:` targeting
-`llm-deepseek` or `attachment-local` in the profile wins. One hard requirement
+`llm-deepseek` or `attachment-local` in the profile wins. Note these are
+id-targeted rows that **replace the whole row config** (not a deep merge):
+installing the plugin resets `llm-deepseek` to exactly those 4 models and
+`attachment-local` to exactly those 3 image keys — restate anything else you
+need in the profile layer. One hard requirement
 remains: the vision model **must be present in the catalog with image input
 modality**, or the provider rejects the request at call time with
 `UNSUPPORTED_CONTENT` — the shipped catalog row is what satisfies that.

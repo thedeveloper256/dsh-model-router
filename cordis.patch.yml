@@ -42,7 +42,13 @@
 # configs keep working through the transition. Max output is 384K per the
 # current Models & Pricing page (was 256K on the v4 preview docs).
 # Direct id-targeted entries (same shape as a profile cordis.patch.yml): they
-# replace the targeted row's whole config.
+# REPLACE the targeted row's whole config (not a deep merge). Installing this
+# plugin therefore resets `llm-deepseek` to exactly the 4 models below and
+# `attachment-local` to exactly the 3 image keys below — any other models or
+# keys those rows carried (host defaults, other plugins, profile edits) are
+# dropped unless restated. If you need extra models or keys, restate them in
+# your PROFILE's cordis.patch.yml (the profile layer applies after the plugin
+# layer, so it wins).
 - id: llm-deepseek
   config:
     models:
@@ -55,10 +61,12 @@
         name: DeepSeek-V4-Flash
         contextWindow: 1000000
         maxTokens: 384000
+        inputModalities: [text, image]
       - id: deepseek-v4-pro
         name: DeepSeek-V4-Pro
         contextWindow: 1000000
         maxTokens: 384000
+        inputModalities: [text, image]
       - id: deepseek-v4-flash-vision-exp
         name: DeepSeek-V4-Flash-Vision-Exp
         contextWindow: 1000000

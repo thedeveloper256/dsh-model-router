@@ -10,8 +10,8 @@ import {
 } from "../src/policy.js";
 
 const CONFIG: RouterConfig = {
-  planner: { provider: "deepseek-official", model: "deepseek-flash" },
-  executor: { provider: "deepseek-official", model: "deepseek-flash" },
+  planner: { provider: "deepseek-official", model: "planner-model-test" },
+  executor: { provider: "deepseek-official", model: "executor-model-test" },
   mode: "strict",
   enabled: true,
   promptSection: true,
@@ -39,6 +39,24 @@ describe("Config", () => {
     expect(cfg.skill).toBe(true);
     expect(cfg.planner.model).toBe("deepseek-flash");
     expect(cfg.executor.model).toBe("deepseek-flash");
+  });
+
+  it("accepts a partial planner route and leaves pins undefined (inherit)", () => {
+    const cfg = Config({ planner: { provider: "x", model: "y" } });
+    expect(cfg.planner.provider).toBe("x");
+    expect(cfg.planner.model).toBe("y");
+    expect(cfg.planner.reasoningEffort).toBeUndefined();
+    expect(cfg.planner.maxTokens).toBeUndefined();
+    expect(cfg.planner.escalateOnError).toBeUndefined();
+  });
+
+  it("accepts a partial vision route and keeps schema defaults for the rest", () => {
+    const cfg = Config({ vision: { enabled: true } });
+    expect(cfg.vision.enabled).toBe(true);
+    expect(cfg.vision.provider).toBe("deepseek-official");
+    expect(cfg.vision.model).toBe("deepseek-flash");
+    expect(cfg.vision.reasoningEffort).toBeUndefined();
+    expect(cfg.vision.maxTokens).toBeUndefined();
   });
 });
 
@@ -69,25 +87,25 @@ describe("roleFor", () => {
 });
 
 describe("routeFor", () => {
-  it("routes planners to pro in strict mode", () => {
-    expect(routeFor({}, CONFIG)).toEqual({ provider: "deepseek-official", model: "deepseek-flash" });
+  it("routes planners to the planner route in strict mode", () => {
+    expect(routeFor({}, CONFIG)).toEqual({ provider: "deepseek-official", model: "planner-model-test" });
   });
 
-  it("routes executors to flash", () => {
+  it("routes executors to the executor route", () => {
     expect(routeFor({ options: { subagentDepth: 1 } }, CONFIG)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "executor-model-test",
     });
   });
 
   it("passes through reasoningEffort and maxTokens when configured", () => {
     const config: RouterConfig = {
       ...CONFIG,
-      planner: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: "high", maxTokens: 8192 },
+      planner: { provider: "deepseek-official", model: "planner-model-test", reasoningEffort: "high", maxTokens: 8192 },
     };
     expect(routeFor({}, config)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "planner-model-test",
       reasoningEffort: "high",
       maxTokens: 8192,
     });
@@ -97,7 +115,7 @@ describe("routeFor", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
     expect(routeFor({}, config, false)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "executor-model-test",
     });
   });
 
@@ -105,7 +123,7 @@ describe("routeFor", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
     expect(routeFor({}, config, true)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "planner-model-test",
     });
   });
 
@@ -113,7 +131,7 @@ describe("routeFor", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
     expect(routeFor({ options: { subagentDepth: 1 } }, config, true)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "executor-model-test",
     });
   });
 
