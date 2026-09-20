@@ -109,17 +109,17 @@ const SKILL_DESCRIPTION =
 
 const SKILL_WHEN_TO_USE = `Use when a task combines planning and implementation: before writing code, after a plan is approved, when delegating execution work, or when the user asks about the pro/flash routing convention.`;
 
-const SKILL_CONTENT = `# Pro planner / Flash executor routing
+const SKILL_TEMPLATE = `# Pro planner / Flash executor routing
 
-This session routes models by role (both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
+This session routes models by role (planner \`{PLANNER_MODEL}\`, executor \`{EXECUTOR_MODEL}\`; both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
 
-- **Planner (this agent)** — \`deepseek-flash\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
-- **Executors (every subagent)** — \`deepseek-flash\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
+- **Planner (this agent)** — \`{PLANNER_MODEL}\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
+- **Executors (every subagent)** — \`{EXECUTOR_MODEL}\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
 
 ## Working rhythm
 
 1. **Plan here.** Explore, decide the approach, and (when plan mode is on) submit the plan with \`exit_plan_mode\`. The plan stays on this agent.
-2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`deepseek-flash\`, so keep them execution-focused: give them the decision, not the decision to make.
+2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`{EXECUTOR_MODEL}\`, so keep them execution-focused: give them the decision, not the decision to make.
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
 
@@ -130,14 +130,37 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 ## Delegation guidelines
 
 - Start independent delegations together in one assistant message and continue useful work while they run (background mode by default).
-- Prefer \`subagent\` for self-contained work and \`workflow\` when many independent pieces need fan-out; their workers run on flash as well.
+- Prefer \`subagent\` for self-contained work and \`workflow\` when many independent pieces need fan-out; their workers run on \`{EXECUTOR_MODEL}\` as well.
 - Do not delegate design: subagents execute decisions already made.
 - If a subagent's task grows into design work, pull it back to this agent and re-delegate the narrowed execution.
 
 ## Verification
 
-- Both roles produce \`deepseek-flash\` (unified since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
+- Planner produces \`{PLANNER_MODEL}\`, executor produces \`{EXECUTOR_MODEL}\` (unified when equal since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the \`model-router\` plugin row in the profile composition is the single place that owns it.`;
+
+/**
+ * Render the skill content for one config, substituting the configured
+ * planner/executor models (mirrors the prompt-section templating).
+ * @param cfg - the resolved router configuration.
+ * @returns the skill markdown with model placeholders filled.
+ */
+function buildSkillContent(cfg: RouterConfig): string {
+  return SKILL_TEMPLATE.replaceAll("{PLANNER_MODEL}", cfg.planner.model).replaceAll(
+    "{EXECUTOR_MODEL}",
+    cfg.executor.model,
+  );
+}
+
+const SKILL_CONTENT = buildSkillContent({
+  planner: { provider: "deepseek-official", model: "deepseek-flash" },
+  executor: { provider: "deepseek-official", model: "deepseek-flash" },
+  mode: "strict",
+  enabled: true,
+  promptSection: true,
+  skill: true,
+  vision: { enabled: false, provider: "deepseek-official", model: "deepseek-flash" },
+});
 
 /** The plugin row id the bundle patch must insert. */
 const ROW_ID = "model-router";
@@ -220,7 +243,18 @@ class ModelRouter extends Service {
     this.harness = ctx as unknown as HarnessContext;
 
     // Every agent that gets created — root sessions, delegation children,
-    // workflow workers, ralph rounds — passes through here.
+    // workflow workers, ralph rounds — passes through here. The
+    // `agent/disposed` listener is registered once (not per agent) and fans
+    // out via a map, so long sessions with many delegations don't accumulate
+    // a global listener per agent.
+    const requestDisposers = new Map<unknown, () => void>();
+    this.harness.on("agent/disposed", (disposedAgent) => {
+      const dispose = requestDisposers.get(disposedAgent);
+      if (dispose !== undefined) {
+        dispose();
+        requestDisposers.delete(disposedAgent);
+      }
+    });
     this.harness.on("agent/created", ({ agent }) => {
       // `prepend` puts this listener OUTERMOST in the `agent/request`
       // waterfall: the harness's model-selection listener runs inside it, so
@@ -265,9 +299,9 @@ class ModelRouter extends Service {
         },
         { prepend: true },
       );
-      this.harness.on("agent/disposed", (disposed) => {
-        if (disposed === agent) dispose();
-      });
+      const prev = requestDisposers.get(agent);
+      if (prev !== undefined) prev();
+      requestDisposers.set(agent, dispose);
     });
 
     // Register the convention surface from the composition config, then let
@@ -322,7 +356,7 @@ class ModelRouter extends Service {
         name: SKILL_NAME,
         description: SKILL_DESCRIPTION,
         whenToUse: SKILL_WHEN_TO_USE,
-        content: SKILL_CONTENT,
+        content: buildSkillContent(cfg),
         source: "runtime",
       });
     }
@@ -335,6 +369,7 @@ export {
   ModelRouter as default,
   SETTINGS_NS,
   VisionRouteSchema,
+  buildSkillContent,
   name,
   ROW_ID,
   SKILL_CONTENT,
