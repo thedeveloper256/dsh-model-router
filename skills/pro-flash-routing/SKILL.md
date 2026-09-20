@@ -6,7 +6,7 @@ whenToUse: Use when a task combines planning and implementation: before writing 
 
 # Pro planner / Flash executor routing
 
-This session routes models by role (both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
+This session routes models by role (planner `deepseek-flash`, executor `deepseek-flash`; both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
 
 - **Planner (this agent)** — `deepseek-flash`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
 - **Executors (every subagent)** — `deepseek-flash`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
@@ -25,11 +25,11 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 ## Delegation guidelines
 
 - Start independent delegations together in one assistant message and continue useful work while they run (background mode by default).
-- Prefer `subagent` for self-contained work and `workflow` when many independent pieces need fan-out; their workers run on flash as well.
+- Prefer `subagent` for self-contained work and `workflow` when many independent pieces need fan-out; their workers run on `deepseek-flash` as well.
 - Do not delegate design: subagents execute decisions already made.
 - If a subagent's task grows into design work, pull it back to this agent and re-delegate the narrowed execution.
 
 ## Verification
 
-- Both roles produce `deepseek-flash` output (unified since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
+- Planner produces `deepseek-flash`, executor produces `deepseek-flash` (unified when equal since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the `model-router` plugin row in the profile composition is the single place that owns it.
