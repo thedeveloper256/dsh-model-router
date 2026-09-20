@@ -2,6 +2,14 @@
 
 ## v0.7.1
 
+- Correct the v0.7.0 retirement note: `deepseek-v4-pro` continues after
+  Sep 14, 2026 with unchanged billing (still served, not retired). Only
+  `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` are retired
+  server-side (routed to V4.1 Flash). Defaults stay unified on
+  `deepseek-flash` by choice (performance/cost/speed), not because Pro is
+  unavailable — point the planner route at `deepseek-v4-pro` with a
+  one-line change if you want the old Pro split.
+
 - Fix `agent/disposed` listener leak: one global listener fans out via a
   request-disposer map instead of registering a host listener per agent.
 - Catalog compat aliases `deepseek-v4-flash` / `deepseek-v4-pro` now declare

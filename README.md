@@ -5,7 +5,7 @@ A small plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - **The planner** — your main agent — defaults to `deepseek-flash` (V4.1 Flash, native multimodal). That's where the thinking happens: understanding what you want, designing the approach, reviewing results, writing the final answer.
 - **The executors** — every subagent it delegates to — default to `deepseek-flash` as well.
 
-Both roles share the same model until V4.1-Pro launches (V4.1 Flash already beats V4-Pro on performance, cost, and speed, so DeepSeek is retiring `deepseek-v4-pro` / `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` — all three now route to V4.1 Flash server-side). The role split stays in the config, so flipping the planner back to Pro later is a one-line change. You keep the careful plan/delegate/review rhythm without paying Pro prices for every tool call.
+Both roles share the same model until V4.1-Pro launches (V4.1 Flash already beats V4-Pro on performance, cost, and speed, so DeepSeek is retiring `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` — both now route to V4.1 Flash server-side — while `deepseek-v4-pro` continues after Sep 14, 2026 with unchanged billing). The role split stays in the config, so flipping the planner back to Pro later is a one-line change. You keep the careful plan/delegate/review rhythm without paying Pro prices for every tool call.
 
 ## Install
 
@@ -31,7 +31,7 @@ Three small surfaces, one rule:
 
 1. **Request routing** — every model request gets stamped with a role. Root agents get the planner route; delegation children (`subagent`, `subagent_fork`, workflow workers, ralph rounds) get the executor route. Both default to `deepseek-flash` (V4.1 Flash) until V4.1-Pro launches, so today the stamp unifies while the role split stays configurable. The rewrite sits at the outermost layer of the request pipeline, so it wins — even over the harness's own default model and over whatever model you pick in the UI for the session. That's intentional: it's the "enforce" knob.
 2. **A prompt section** — a short note that renders before the agent's persona, telling the planner: you're the thinker, delegate the implementation. Without this, the model tends to just do everything itself.
-3. **A skill** — the `pro-flash-routing` skill shows up in the session's skill catalog and spells out the working rhythm: plan, delegate, review, report. Same convention, but loadable on demand when the agent wants details.
+3. **A skill** — the `pro-flash-routing` skill shows up in the session's skill catalog and spells out the working rhythm: plan, delegate, review, report. Same convention, but loadable on demand when the agent wants details. Since v0.7.1 the skill text follows your configured routes instead of hardcoding model names.
 
 ## How the roles are decided
 
@@ -130,9 +130,10 @@ The plugin ships the support in its own `cordis.patch.yml`:
 
 - a **catalog entry** for `deepseek-flash` on the `llm-deepseek` row (with
   `inputModalities: [text, image]`, `contextWindow: 1000000`, `maxTokens:
-  384000`), plus the retired `deepseek-v4-flash` / `deepseek-v4-pro` /
+  384000`), plus `deepseek-v4-pro` (still served after Sep 14, 2026 with
+  unchanged billing) and the retired `deepseek-v4-flash` /
   `deepseek-v4-flash-vision-exp` ids kept as compat aliases through the
-  transition, and
+  transition (since v0.7.1 all four ids declare image input), and
 - **raised `attachment-local` image admission limits** so normal screenshots
   (~8K, 15MB) attach without being rejected (`maxImageDimension: 8192`,
   `maxImagePixels: 100000000`, `maxImageBytes: 15728640`).
@@ -217,7 +218,7 @@ only; with vision routing enabled, an image-heavy session logged 508
 `deepseek-v4-flash-vision-exp` responses.
 
 One operational note: the routing rewrite is loaded at harness boot. After updating the plugin (e.g.
-0.6.3 → 0.7.0), restart the profile — a session that keeps running across the update can keep behaving
+0.7.0 → 0.7.1), restart the profile — a session that keeps running across the update can keep behaving
 per the old code until the process reloads.
 
 ## Development

@@ -37,9 +37,10 @@
         # Register the `pro-flash-routing` skill in the session catalog.
         skill: true
 # Vision support: deepseek-flash (V4.1 Flash) is natively multimodal, so the
-# catalog lists it with image input. Legacy v4 names are kept as compat
-# aliases (retired server-side, routed to V4.1 Flash): they let existing
-# configs keep working through the transition. Max output is 384K per the
+# catalog lists it with image input. `deepseek-v4-pro` is still served after
+# Sep 14, 2026 (unchanged billing); legacy `deepseek-v4-flash` /
+# `deepseek-v4-flash-vision-exp` are retired server-side (routed to V4.1
+# Flash): they let existing configs keep working through the transition. Max output is 384K per the
 # current Models & Pricing page (was 256K on the v4 preview docs).
 # Direct id-targeted entries (same shape as a profile cordis.patch.yml): they
 # REPLACE the targeted row's whole config (not a deep merge). Installing this
