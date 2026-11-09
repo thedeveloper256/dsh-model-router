@@ -31,8 +31,8 @@ const name = "model-router";
 
 /** One provider/model pair, with defaults and optional effort/token caps. */
 const ModelRouteSchema = z.object({
-  provider: z.string().min(1),
-  model: z.string().min(1),
+  provider: z.string().min(1).default("deepseek-official"),
+  model: z.string().min(1).default("deepseek-flash"),
   reasoningEffort: z.union(["off", "low", "high", "max"]),
   maxTokens: z.number().min(1),
   escalateOnError: z.boolean(),
@@ -57,14 +57,10 @@ const VisionRouteSchema = z.object({
 
 /** The plugin's public config, validated at row load. */
 const Config = z.object({
-  planner: ModelRouteSchema.default({
-    provider: "deepseek-official",
-    model: "deepseek-flash",
-  } as never),
-  executor: ModelRouteSchema.default({
-    provider: "deepseek-official",
-    model: "deepseek-flash",
-  } as never),
+  // Field-level defaults on ModelRouteSchema fill provider/model in when a
+  // route is only partly set (e.g. `planner: { model: deepseek-v4-pro }`).
+  planner: ModelRouteSchema.default({} as never),
+  executor: ModelRouteSchema.default({} as never),
   mode: z.union(["strict", "plan"]).default("strict"),
   enabled: z.boolean().default(true),
   promptSection: z.boolean().default(true),
@@ -105,21 +101,37 @@ const SECTION_TEXT = `Model routing is role-based. Planning runs on {PLANNER_MOD
 const SKILL_NAME = "pro-flash-routing";
 
 const SKILL_DESCRIPTION =
-  "Route planning and code execution across models: plan on the pro planner agent, delegate implementation to flash executor subagents.";
+  "Route planning and code execution across models: plan on the planner agent, delegate implementation to executor subagents.";
 
-const SKILL_WHEN_TO_USE = `Use when a task combines planning and implementation: before writing code, after a plan is approved, when delegating execution work, or when the user asks about the pro/flash routing convention.`;
+const SKILL_WHEN_TO_USE = `Use when a task combines planning and implementation: before writing code, after a plan is approved, when delegating execution work, or when the user asks about the planner/executor routing convention.`;
 
-const SKILL_TEMPLATE = `# Pro planner / Flash executor routing
+/**
+ * Build the `pro-flash-routing` skill body from the configured routes, so the
+ * text always names the models the router actually stamps.
+ * @param cfg - the planner, executor and vision routes.
+ * @returns the skill's Markdown content.
+ */
+function buildSkillContent(cfg: Pick<RouterConfig, "planner" | "executor" | "vision">): string {
+  const planner = cfg.planner.model;
+  const executor = cfg.executor.model;
+  const visionLine = cfg.vision.enabled
+    ? `\n- **Vision** — requests whose session carries image content route to \`${cfg.vision.model}\`, whatever the role.`
+    : "";
+  const verification =
+    planner === executor
+      ? `Both roles produce \`${planner}\`.`
+      : `Planner requests log \`${planner}\`; executor requests log \`${executor}\`.`;
+  return `# Pro planner / Flash executor routing
 
-This session routes models by role (planner \`{PLANNER_MODEL}\`, executor \`{EXECUTOR_MODEL}\`; both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
+This session routes models by role:
 
-- **Planner (this agent)** — \`{PLANNER_MODEL}\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
-- **Executors (every subagent)** — \`{EXECUTOR_MODEL}\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
+- **Planner (this agent)** — \`${planner}\`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
+- **Executors (every subagent)** — \`${executor}\`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.${visionLine}
 
 ## Working rhythm
 
 1. **Plan here.** Explore, decide the approach, and (when plan mode is on) submit the plan with \`exit_plan_mode\`. The plan stays on this agent.
-2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`{EXECUTOR_MODEL}\`, so keep them execution-focused: give them the decision, not the decision to make.
+2. **Delegate the execution.** Once a plan is approved, hand each self-contained chunk of implementation to a subagent with a complete prompt: exact files to touch, the change to make, and how to verify. Subagents are automatically routed to \`${executor}\`, so keep them execution-focused: give them the decision, not the decision to make.
 3. **Review here.** Read the subagent's result on this agent, verify it yourself (tests, diffs, logs), and iterate with follow-up messages to the same subagent when available.
 4. **Report here.** Summaries, plans, and answers to the user come from this agent.
 
@@ -130,37 +142,18 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 ## Delegation guidelines
 
 - Start independent delegations together in one assistant message and continue useful work while they run (background mode by default).
-- Prefer \`subagent\` for self-contained work and \`workflow\` when many independent pieces need fan-out; their workers run on \`{EXECUTOR_MODEL}\` as well.
+- Prefer \`subagent\` for self-contained work and \`workflow\` when many independent pieces need fan-out; their workers run on the executor route as well.
 - Do not delegate design: subagents execute decisions already made.
 - If a subagent's task grows into design work, pull it back to this agent and re-delegate the narrowed execution.
 
 ## Verification
 
-- Planner produces \`{PLANNER_MODEL}\`, executor produces \`{EXECUTOR_MODEL}\` (unified when equal since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
+- ${verification} If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the \`model-router\` plugin row in the profile composition is the single place that owns it.`;
-
-/**
- * Render the skill content for one config, substituting the configured
- * planner/executor models (mirrors the prompt-section templating).
- * @param cfg - the resolved router configuration.
- * @returns the skill markdown with model placeholders filled.
- */
-function buildSkillContent(cfg: RouterConfig): string {
-  return SKILL_TEMPLATE.replaceAll("{PLANNER_MODEL}", cfg.planner.model).replaceAll(
-    "{EXECUTOR_MODEL}",
-    cfg.executor.model,
-  );
 }
 
-const SKILL_CONTENT = buildSkillContent({
-  planner: { provider: "deepseek-official", model: "deepseek-flash" },
-  executor: { provider: "deepseek-official", model: "deepseek-flash" },
-  mode: "strict",
-  enabled: true,
-  promptSection: true,
-  skill: true,
-  vision: { enabled: false, provider: "deepseek-official", model: "deepseek-flash" },
-});
+/** Skill body for the default config (kept for backward compatibility). */
+const SKILL_CONTENT = buildSkillContent(resolveConfig({}));
 
 /** The plugin row id the bundle patch must insert. */
 const ROW_ID = "model-router";
@@ -190,7 +183,10 @@ interface HarnessContext {
     event: "agent/created",
     listener: (payload: { agent: AgentLike }) => void,
   ): () => void;
-  on(event: "agent/disposed", listener: (agent: unknown) => void): () => void;
+  on(
+    event: "agent/disposed",
+    listener: (payload: { agent: AgentLike } | AgentLike) => void,
+  ): () => void;
   systemPrompt: {
     section(section: { name: string; order: number; text: string }): () => void;
   };
@@ -203,6 +199,23 @@ interface HarnessContext {
       source: string;
     }): () => void;
   };
+}
+
+/**
+ * The documented `agent/disposed` payload is `{ agent }` (dsh-agent
+ * runtime-types); a bare agent is accepted defensively.
+ */
+function disposedAgentOf(payload: unknown): AgentLike | undefined {
+  if (payload !== null && typeof payload === "object" && "agent" in payload) {
+    return (payload as { agent: AgentLike }).agent;
+  }
+  if (payload === null || typeof payload !== "object") return undefined;
+  return payload as AgentLike;
+}
+
+/** Copy a non-empty string field onto the request; never stamp `undefined`. */
+function stampString(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (typeof value === "string" && value.length > 0) target[key] = value;
 }
 
 /** Fold plan-mode state for an agent without trusting the agent's exact shape. */
@@ -243,65 +256,29 @@ class ModelRouter extends Service {
     this.harness = ctx as unknown as HarnessContext;
 
     // Every agent that gets created — root sessions, delegation children,
-    // workflow workers, ralph rounds — passes through here. The
-    // `agent/disposed` listener is registered once (not per agent) and fans
-    // out via a map, so long sessions with many delegations don't accumulate
-    // a global listener per agent.
-    const requestDisposers = new Map<unknown, () => void>();
-    this.harness.on("agent/disposed", (disposedAgent) => {
-      const dispose = requestDisposers.get(disposedAgent);
-      if (dispose !== undefined) {
-        dispose();
-        requestDisposers.delete(disposedAgent);
-      }
-    });
+    // workflow workers, ralph rounds — passes through here. One host-level
+    // `agent/disposed` listener (below) releases each agent's request
+    // listener; the WeakMap never keeps a disposed agent alive.
+    const requestDisposers = new WeakMap<object, () => void>();
     this.harness.on("agent/created", ({ agent }) => {
       // `prepend` puts this listener OUTERMOST in the `agent/request`
       // waterfall: the harness's model-selection listener runs inside it, so
       // this rewrite is applied LAST and wins over the session's selected
-      // model (which dsh-base defaulted to deepseek-v4-flash, now deepseek-flash, and the user
-      // settings or UI can change).
-      const dispose = agent.ctx.on(
-        "agent/request",
-        async (payload, next) => {
-          const resolved = await next();
-          const cfg = this.source();
-          if (!cfg.enabled) return resolved;
-          // Vision branch FIRST: any request whose session log carries image
-          // content is stamped with the vision model, regardless of role. The
-          // `agent/request` waterfall payload never includes `messages`, so
-          // detection reads the session event log (`user/message`,
-          // `assistant/message`, `tool/result`). The harness's own
-          // model-selection listener has already run (`await next()`), so
-          // this rewrite wins over the session model.
-          if (shouldUseVision(agent.session?.events, cfg.vision)) {
-            const stamped: Record<string, unknown> = {
-              ...resolved,
-              provider: cfg.vision.provider,
-              model: cfg.vision.model,
-            };
-            if (cfg.vision.maxTokens !== undefined) stamped.maxTokens = cfg.vision.maxTokens;
-            const effort = effortFor(cfg.vision, agent.session?.events);
-            if (effort !== undefined) stamped.reasoningEffort = effort;
-            return stamped;
-          }
-          const route = routeFor(agent, cfg, isPlanModeActive(agent));
-          if (route === undefined) return resolved;
-          const stamped: Record<string, unknown> = {
-            ...resolved,
-            provider: route.provider,
-            model: route.model,
-          };
-          if (route.maxTokens !== undefined) stamped.maxTokens = route.maxTokens;
-          const effort = effortFor(route, agent.session?.events);
-          if (effort !== undefined) stamped.reasoningEffort = effort;
-          return stamped;
-        },
-        { prepend: true },
-      );
-      const prev = requestDisposers.get(agent);
-      if (prev !== undefined) prev();
+      // model.
+      const dispose = agent.ctx.on("agent/request", this.requestRewrite(agent), {
+        prepend: true,
+      });
+      // A re-announced agent replaces (and releases) its previous listener.
+      requestDisposers.get(agent)?.();
       requestDisposers.set(agent, dispose);
+    });
+    this.harness.on("agent/disposed", (payload) => {
+      const agent = disposedAgentOf(payload);
+      if (agent === undefined) return;
+      const dispose = requestDisposers.get(agent);
+      if (dispose === undefined) return;
+      requestDisposers.delete(agent);
+      dispose();
     });
 
     // Register the convention surface from the composition config, then let
@@ -319,6 +296,37 @@ class ModelRouter extends Service {
         onChange: () => this.render(this.source()),
       },
     );
+  }
+
+  /**
+   * Build the `agent/request` waterfall listener for one agent: stamp the
+   * vision route when the session carries images, otherwise the role route.
+   * @param agent - the agent whose requests the listener rewrites.
+   */
+  requestRewrite(agent: AgentLike) {
+    return async (
+      _payload: Record<string, unknown>,
+      next: () => Promise<Record<string, unknown>>,
+    ): Promise<Record<string, unknown>> => {
+      const resolved = await next();
+      const cfg = this.source();
+      if (!cfg.enabled) return resolved;
+      // Vision branch FIRST: any request whose session log carries image
+      // content is stamped with the vision model, regardless of role. The
+      // `agent/request` payload never includes `messages`, so detection reads
+      // the session event log.
+      const route = shouldUseVision(agent.session?.events, cfg.vision)
+        ? cfg.vision
+        : routeFor(agent, cfg, isPlanModeActive(agent));
+      if (route === undefined) return resolved;
+      const stamped: Record<string, unknown> = { ...resolved };
+      stampString(stamped, "provider", route.provider);
+      stampString(stamped, "model", route.model);
+      if (route.maxTokens !== undefined) stamped.maxTokens = route.maxTokens;
+      const effort = effortFor(route, agent.session?.events);
+      if (effort !== undefined) stamped.reasoningEffort = effort;
+      return stamped;
+    };
   }
 
   /**
@@ -369,10 +377,11 @@ export {
   ModelRouter as default,
   SETTINGS_NS,
   VisionRouteSchema,
-  buildSkillContent,
   name,
   ROW_ID,
   SKILL_CONTENT,
+  buildSkillContent,
+  resolveConfig,
   SKILL_DESCRIPTION,
   SKILL_NAME,
   SKILL_WHEN_TO_USE,
