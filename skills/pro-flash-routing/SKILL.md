@@ -1,12 +1,12 @@
 ---
 name: pro-flash-routing
-description: Route planning and code execution across models: plan on the pro planner agent, delegate implementation to flash executor subagents.
-whenToUse: Use when a task combines planning and implementation: before writing code, after a plan is approved, when delegating execution work, or when the user asks about the pro/flash routing convention.
+description: "Route planning and code execution across models: plan on the planner agent, delegate implementation to executor subagents."
+whenToUse: "Use when a task combines planning and implementation: before writing code, after a plan is approved, when delegating execution work, or when the user asks about the planner/executor routing convention."
 ---
 
 # Pro planner / Flash executor routing
 
-This session routes models by role (both default to deepseek-flash, V4.1 Flash with native multimodal; vision needs no separate model):
+This session routes models by role:
 
 - **Planner (this agent)** — `deepseek-flash`. Planning, design decisions, reviewing delegated output, and user-facing synthesis happen here.
 - **Executors (every subagent)** — `deepseek-flash`. Implementation work happens there: writing code, running commands, builds, and tests. The harness forces the model automatically; you do not select it.
@@ -25,11 +25,11 @@ Input tokens are the expensive part of the planner. Don't re-read large files or
 ## Delegation guidelines
 
 - Start independent delegations together in one assistant message and continue useful work while they run (background mode by default).
-- Prefer `subagent` for self-contained work and `workflow` when many independent pieces need fan-out; their workers run on flash as well.
+- Prefer `subagent` for self-contained work and `workflow` when many independent pieces need fan-out; their workers run on the executor route as well.
 - Do not delegate design: subagents execute decisions already made.
 - If a subagent's task grows into design work, pull it back to this agent and re-delegate the narrowed execution.
 
 ## Verification
 
-- Both roles produce `deepseek-flash` output (unified since V4.1; split again when V4.1-Pro lands). If you need to confirm, check the session log's model metadata.
+- Both roles produce `deepseek-flash`. If you need to confirm, check the session log's model metadata.
 - If routing ever looks wrong, the `model-router` plugin row in the profile composition is the single place that owns it.
