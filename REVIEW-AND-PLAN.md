@@ -310,6 +310,14 @@ Run V, commit, then follow the README "Releasing" steps (tag, `gh release`, `npm
 - **Pass/fail:** if the root shows `deepseek-v4-pro`, the old path still works (F1 drops to low priority). If the root shows `deepseek-flash`, F1 is confirmed.
 - **Worker:** you (it needs a live harness and an API key); I can prepare the profile files.
 
+**B1 result (2026-11-08, dsh 0.2.2-rc.1, spike in `spike/b1`):** the question in F1 can't be answered yet, because **the plugin doesn't load at all**:
+- `dsh plugin add` refuses it (peer ranges `^0.1.0-rc.8`, F8) unless an exact-version risk exemption is granted.
+- With the exemption, the harness reports `model-router (dsh-model-router): failed to import: SyntaxError: The requested module '@deepseek-ai/dsh-plan-mode' does not provide an export named 'foldPlanMode'`, and "1 entry did not activate". The session has no router prompt section or skill.
+- Bundled 0.2.2-rc.1 exports: `dsh-plan-mode` → `EXIT_PLAN_MODE, PlanModeController, planProjectionDefinition, resolveConfig` (plan state is now a session projection); `dsh-settings` → `SettingsConflictError, SettingsForms, redactSecrets` (`installSettingsSection`/`settingsNamespace` are gone, confirming F9).
+- Also: 0.2.x session logs are `session.v4.jsonl.zstd` with no `assistant/message` events, so the README's log check counts nothing; count `request/header` (`data.header.config.model`) instead.
+
+So the published plugin is a no-op on 0.2.x for a more basic reason than F1. B2–B4 now start with making it import: read plan state via the plan projection, move the settings toggle to `SettingsForms` / `.volatile()` Config (B3), and bump peers/devDeps to 0.2.x types (B4). Re-run the spike after that to settle F1 itself.
+
 ### B2. Move routing to `agent.model.select` (if B1 confirms F1)
 - **Goal:** route through the supported API, and keep the legacy path for rc.8 hosts.
 - **Files:** `src/index.ts` (new `applySelection(agent)`), `src/policy.ts` (a pure `decideRoute(agent, cfg, events, planActive): { selection, maxTokens? }` that combines the vision-first logic, `routeFor` and `effortFor`).

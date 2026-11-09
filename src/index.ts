@@ -4,10 +4,11 @@
  * Both roles default to `deepseek-flash` (V4.1 Flash, native multimodal):
  * the planner (the session's root agent) and delegated executor subagents
  * share the same model until V4.1-Pro launches, at which point the planner
- * route can be flipped back with a one-line config change. Enforcement is a
- * per-agent `agent/request` rewrite registered when the agent is created, so
- * it applies in every mode (web / headless / tui) and every agent preset,
- * including subagents the delegation tools create.
+ * route can be flipped back with a one-line config change. Enforcement goes
+ * through `agent.model.select()` (harness 0.2.1+): once when an agent is
+ * created, then again only when the route decision changes (plan mode,
+ * images, error escalation). It applies in every mode (web / headless / tui)
+ * and every agent preset, including subagents the delegation tools create.
  *
  * Each role route may also pin `reasoningEffort` and `maxTokens`; when set,
  * they override the session's selection for that role. A `mode` switch lets a
@@ -22,9 +23,7 @@
  */
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
-import { foldPlanMode } from "@deepseek-ai/dsh-plan-mode";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { effortFor, hasImageContent, recentStepsHadError, roleFor, routeFor, sessionHasImage, shouldUseVision, type RouterConfig } from "./policy.js";
+import { effortFor, hasImageContent, recentStepsHadError, roleFor, routeFor, sessionHasImage, shouldUseVision, type ModelRoute, type RouterConfig } from "./policy.js";
 
 /** Plugin row id; the bundle patch inserts it under this id. */
 const name = "model-router";
@@ -68,8 +67,8 @@ const Config = z.object({
   vision: VisionRouteSchema.default({} as never),
 });
 
-/** Settings namespace the live on/off toggle lives under (settings.yaml). */
-const SETTINGS_NS = settingsNamespace("model-router");
+/** Settings form id: the plugin's profile entry id. */
+const SETTINGS_NS = "model-router";
 
 /**
  * Resolve raw row config into the internal shape, failing loud on garbage.
@@ -158,34 +157,47 @@ const SKILL_CONTENT = buildSkillContent(resolveConfig({}));
 /** The plugin row id the bundle patch must insert. */
 const ROW_ID = "model-router";
 
-/** Minimal structural view of the live agent object the router reads. */
-interface AgentLike {
-  ctx: AgentScopedContext;
-  options?: { subagentDepth?: number };
-  session?: { header?: { origin?: string }; events?: unknown[] };
+/** One complete model choice, as `agent.model.select()` takes it. */
+interface ModelSelection {
+  provider: string;
+  model: string;
+  reasoningEffort?: string;
 }
 
-/** The agent-scoped context's waterfall surface the router uses. */
-interface AgentScopedContext {
-  on(
-    event: "agent/request",
-    listener: (
-      payload: Record<string, unknown>,
-      next: () => Promise<Record<string, unknown>>,
-    ) => Promise<Record<string, unknown>>,
-    options?: { prepend?: boolean },
-  ): () => void;
+/** Minimal structural view of a live 0.2.x session the router reads. */
+interface SessionLike {
+  header?: { origin?: string };
+  snapshotEvents?: () => readonly unknown[];
+  /** Pre-0.2 sessions exposed the log directly; read defensively. */
+  events?: unknown[];
 }
+
+/** Minimal structural view of the live agent object the router reads. */
+interface AgentLike {
+  options?: { subagentDepth?: number; maxTokens?: number };
+  session?: SessionLike;
+  model?: {
+    current(): Readonly<ModelSelection> | undefined;
+    select(selection: Readonly<ModelSelection>): void;
+  };
+}
+
+/** Why an agent was announced (dsh-agent `SessionStartSource`). */
+type StartSource = "startup" | "resume" | "clear" | "compact";
 
 /** Host-plane surface the router consumes (events, prompt registry, skills). */
 interface HarnessContext {
   on(
     event: "agent/created",
-    listener: (payload: { agent: AgentLike }) => void,
+    listener: (payload: { agent: AgentLike; source?: StartSource }) => void,
   ): () => void;
   on(
     event: "agent/disposed",
     listener: (payload: { agent: AgentLike } | AgentLike) => void,
+  ): () => void;
+  on(
+    event: "session/event",
+    listener: (session: SessionLike, event: { type?: string }) => void,
   ): () => void;
   systemPrompt: {
     section(section: { name: string; order: number; text: string }): () => void;
@@ -202,6 +214,13 @@ interface HarnessContext {
 }
 
 /**
+ * Session event types that can change the route decision: plan mode toggles,
+ * new user input (images), tool results (errors, images) and completed steps
+ * (the escalation window). Anything else cannot change it.
+ */
+const ROUTE_EVENTS = new Set(["plan/mode", "user/message", "tool/result", "step/end"]);
+
+/**
  * The documented `agent/disposed` payload is `{ agent }` (dsh-agent
  * runtime-types); a bare agent is accepted defensively.
  */
@@ -213,32 +232,69 @@ function disposedAgentOf(payload: unknown): AgentLike | undefined {
   return payload as AgentLike;
 }
 
-/** Copy a non-empty string field onto the request; never stamp `undefined`. */
-function stampString(target: Record<string, unknown>, key: string, value: unknown): void {
-  if (typeof value === "string" && value.length > 0) target[key] = value;
-}
-
-/** Fold plan-mode state for an agent without trusting the agent's exact shape. */
-function isPlanModeActive(agent: AgentLike): boolean {
-  const events = agent.session?.events;
-  if (!Array.isArray(events)) return false;
-  try {
-    return foldPlanMode(events as Parameters<typeof foldPlanMode>[0]);
-  } catch {
-    return false;
+/**
+ * Read an agent's session log. 0.2.x sessions expose `snapshotEvents()`; a
+ * bare `events` array is accepted defensively.
+ * @param agent - the live agent.
+ * @returns the event log, or `undefined` when none is readable.
+ */
+function eventsOf(agent: AgentLike): readonly unknown[] | undefined {
+  const session = agent.session;
+  if (session === undefined) return undefined;
+  if (typeof session.snapshotEvents === "function") {
+    try {
+      return session.snapshotEvents();
+    } catch {
+      return undefined;
+    }
   }
+  return Array.isArray(session.events) ? session.events : undefined;
 }
 
 /**
- * Cordis service: per-agent request routing plus the convention surface.
+ * Fold plan-mode state from a session log: the last `plan/mode` event wins.
+ * @param events - the session event log.
+ * @returns whether plan mode is active.
+ */
+function planModeActive(events: readonly unknown[] | undefined): boolean {
+  if (!Array.isArray(events)) return false;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i] as { type?: string; data?: { active?: unknown } } | undefined;
+    if (event?.type === "plan/mode") return event.data?.active === true;
+  }
+  return false;
+}
+
+/** Compare two selections field by field; an absent effort equals absent. */
+function sameSelection(
+  a: Readonly<ModelSelection> | undefined,
+  b: Readonly<ModelSelection>,
+): boolean {
+  return (
+    a !== undefined &&
+    a.provider === b.provider &&
+    a.model === b.model &&
+    (a.reasoningEffort ?? undefined) === (b.reasoningEffort ?? undefined)
+  );
+}
+
+/** One route decision: the route plus the effort it pins (if any). */
+interface RouteDecision {
+  route: ModelRoute;
+  /** Pinned or escalated effort; `undefined` keeps the agent's own effort. */
+  effort: string | undefined;
+  /** Stable key; the router calls `select()` only when it changes. */
+  key: string;
+}
+
+/**
+ * Cordis service: routes each agent's model through `agent.model.select()`
+ * when the route decision changes, plus the convention surface.
  */
 class ModelRouter extends Service {
   static inject = ["skills", "systemPrompt"];
 
   config: RouterConfig;
-
-  /** Currently authoritative config; swapped by the settings section when one is mounted. */
-  source: () => RouterConfig;
 
   /** Host-plane surface the router consumes (events, prompt registry, skills). */
   harness: HarnessContext;
@@ -249,91 +305,123 @@ class ModelRouter extends Service {
   /** Disposer of the currently registered skill, if any. */
   skillDispose?: () => void;
 
+  /** Last decision key applied per agent. */
+  private readonly lastKey = new WeakMap<object, string>();
+
+  /** Live agent per session object, for `session/event` dispatch. */
+  private readonly agentBySession = new WeakMap<object, AgentLike>();
+
   constructor(ctx: Context, rawConfig: unknown = {}) {
     super(ctx, "modelRouter");
     this.config = resolveConfig(rawConfig);
-    this.source = () => this.config;
     this.harness = ctx as unknown as HarnessContext;
 
-    // Every agent that gets created — root sessions, delegation children,
-    // workflow workers, ralph rounds — passes through here. One host-level
-    // `agent/disposed` listener (below) releases each agent's request
-    // listener; the WeakMap never keeps a disposed agent alive.
-    const requestDisposers = new WeakMap<object, () => void>();
-    this.harness.on("agent/created", ({ agent }) => {
-      // `prepend` puts this listener OUTERMOST in the `agent/request`
-      // waterfall: the harness's model-selection listener runs inside it, so
-      // this rewrite is applied LAST and wins over the session's selected
-      // model.
-      const dispose = agent.ctx.on("agent/request", this.requestRewrite(agent), {
-        prepend: true,
-      });
-      // A re-announced agent replaces (and releases) its previous listener.
-      requestDisposers.get(agent)?.();
-      requestDisposers.set(agent, dispose);
+    // Every agent that gets created (root sessions, delegation children,
+    // workflow workers, ralph rounds) passes through here. `agent/created` is
+    // awaited before the first step, so the selection lands in time.
+    this.harness.on("agent/created", ({ agent, source }) => {
+      if (agent.session !== undefined) this.agentBySession.set(agent.session, agent);
+      // A resumed session keeps whatever model it recorded (possibly the
+      // user's own choice); the router only takes over on the next change.
+      this.apply(agent, source === "resume");
     });
     this.harness.on("agent/disposed", (payload) => {
       const agent = disposedAgentOf(payload);
       if (agent === undefined) return;
-      const dispose = requestDisposers.get(agent);
-      if (dispose === undefined) return;
-      requestDisposers.delete(agent);
-      dispose();
+      this.lastKey.delete(agent);
+      if (agent.session !== undefined) this.agentBySession.delete(agent.session);
+    });
+    // Post-commit append feed: re-decide on events that can change the route.
+    // A selection made here applies from the next step on.
+    this.harness.on("session/event", (session, event) => {
+      if (session === null || typeof session !== "object") return;
+      if (!ROUTE_EVENTS.has(event?.type ?? "")) return;
+      const agent = this.agentBySession.get(session);
+      if (agent !== undefined) this.apply(agent, false);
     });
 
-    // Register the convention surface from the composition config, then let
-    // the settings section (when mounted) take over as the live source.
+    // Settings edits rewrite the profile patch; a changed field remounts this
+    // plugin, so the constructor re-renders with the new config. The plugin
+    // ships its own settings card, so turn off the generated page.
+    const fiber = (ctx as unknown as { fiber?: unknown }).fiber;
+    (ctx as unknown as {
+      inject(deps: string[], cb: (child: Context) => void): unknown;
+    }).inject(["settings"], (child) => {
+      const scoped = child as unknown as {
+        effect(execute: () => () => void): unknown;
+        settings: { configure(p: { auto?: boolean }, owner?: unknown): () => void };
+      };
+      scoped.effect(() => scoped.settings.configure({ auto: false }, fiber));
+    });
+
     this.render(this.config);
-    installSettingsSection(
-      ctx,
-      SETTINGS_NS,
-      Config,
-      this.config as unknown as ReturnType<typeof Config>,
-      {
-        setSource: (current) => {
-          this.source = current;
-        },
-        onChange: () => this.render(this.source()),
-      },
-    );
   }
 
   /**
-   * Build the `agent/request` waterfall listener for one agent: stamp the
-   * vision route when the session carries images, otherwise the role route.
-   * @param agent - the agent whose requests the listener rewrites.
+   * Decide the route for one agent from its role, plan mode, images and
+   * recent errors.
+   * @param agent - the live agent.
+   * @returns the decision, or `undefined` to leave the agent alone.
    */
-  requestRewrite(agent: AgentLike) {
-    return async (
-      _payload: Record<string, unknown>,
-      next: () => Promise<Record<string, unknown>>,
-    ): Promise<Record<string, unknown>> => {
-      const resolved = await next();
-      const cfg = this.source();
-      if (!cfg.enabled) return resolved;
-      // Vision branch FIRST: any request whose session log carries image
-      // content is stamped with the vision model, regardless of role. The
-      // `agent/request` payload never includes `messages`, so detection reads
-      // the session event log.
-      const route = shouldUseVision(agent.session?.events, cfg.vision)
-        ? cfg.vision
-        : routeFor(agent, cfg, isPlanModeActive(agent));
-      if (route === undefined) return resolved;
-      const stamped: Record<string, unknown> = { ...resolved };
-      stampString(stamped, "provider", route.provider);
-      stampString(stamped, "model", route.model);
-      if (route.maxTokens !== undefined) stamped.maxTokens = route.maxTokens;
-      const effort = effortFor(route, agent.session?.events);
-      if (effort !== undefined) stamped.reasoningEffort = effort;
-      return stamped;
+  decide(agent: AgentLike): RouteDecision | undefined {
+    const cfg = this.config;
+    if (!cfg.enabled) return undefined;
+    const events = eventsOf(agent);
+    // Vision first: image content anywhere in the session wins over the role.
+    const route = shouldUseVision(events, cfg.vision)
+      ? cfg.vision
+      : routeFor(agent, cfg, planModeActive(events));
+    if (route === undefined) return undefined;
+    const effort = effortFor(route, events);
+    return {
+      route,
+      effort,
+      key: `${route.provider}\u0000${route.model}\u0000${effort ?? ""}\u0000${route.maxTokens ?? ""}`,
     };
   }
 
   /**
+   * Apply the current decision to one agent if it changed since the last
+   * one. The router never re-selects on an unchanged decision, so a model the
+   * user picks mid-session stays until the next route transition.
+   * @param agent - the live agent.
+   * @param seedOnly - record the decision without selecting (resume).
+   */
+  apply(agent: AgentLike, seedOnly: boolean): void {
+    const decision = this.decide(agent);
+    if (decision === undefined) {
+      this.lastKey.delete(agent);
+      return;
+    }
+    if (this.lastKey.get(agent) === decision.key) return;
+    this.lastKey.set(agent, decision.key);
+    if (seedOnly) return;
+    const { route, effort } = decision;
+    if (route.maxTokens !== undefined && agent.options !== undefined) {
+      agent.options.maxTokens = route.maxTokens;
+    }
+    const model = agent.model;
+    if (model === undefined) return;
+    let current: Readonly<ModelSelection> | undefined;
+    try {
+      current = model.current();
+    } catch {
+      current = undefined;
+    }
+    const reasoningEffort = effort ?? current?.reasoningEffort;
+    const selection: ModelSelection = {
+      provider: route.provider,
+      model: route.model,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    };
+    if (sameSelection(current, selection)) return;
+    model.select(selection);
+  }
+
+  /**
    * Register the convention surface (prompt section + skill) for `cfg`,
-   * replacing whatever is currently registered. Called on construction and
-   * after every committed settings change; while `enabled` is false, nothing
-   * stays registered.
+   * replacing whatever is currently registered. While `enabled` is false,
+   * nothing stays registered.
    */
   private render(cfg: RouterConfig): void {
     if (this.promptDispose) {

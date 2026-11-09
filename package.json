@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-router",
   "description": "DeepSeek Harness plugin: role-based model routing — both roles default to deepseek-flash (V4.1 Flash, native multimodal) until V4.1-Pro launches.",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "publishConfig": {
     "access": "public"
   },
@@ -30,9 +30,9 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-locale"
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
       ],
       "platform": "web"
     }
@@ -45,16 +45,12 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-plan-mode": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.8",
+    "@deepseek-ai/cordis": "^4.1.0",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-plan-mode": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.8",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/schemastery": "^3.19.0",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "esbuild": "^0.27.7",
@@ -74,5 +70,8 @@
     "ai-agents",
     "llm",
     "plugin"
-  ]
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.3.0-0"
+  }
 }
