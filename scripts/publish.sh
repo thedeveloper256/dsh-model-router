@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_NAME="dsh-model-router"
-REPO_DESC="DeepSeek Harness plugin: role-based model routing — planner on deepseek-v4-pro, executor subagents on deepseek-v4-flash."
+REPO_DESC="DeepSeek Harness plugin: role-based model routing — planner and executor subagent routes, both deepseek-flash by default."
 
 cd "$(dirname "$0")/.."
 

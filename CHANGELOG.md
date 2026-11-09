@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.7.1
+
+- Correct the v0.7.0 retirement note: `deepseek-v4-pro` continues after
+  Sep 14, 2026 with unchanged billing (still served, not retired), per the
+  [official changelog](https://api-docs.deepseek.com/updates). Only
+  `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` are retired
+  server-side (routed to V4.1 Flash). Defaults stay unified on
+  `deepseek-flash` by choice (performance/cost/speed), not because Pro is
+  unavailable — point the planner route at `deepseek-v4-pro` with a
+  one-line change if you want the old Pro split. V4-Pro has no vision. Set
+  `vision.enabled: true` so image sessions go to `deepseek-flash`.
+- Fix `agent/disposed` listener leak: a single listener replaces the
+  per-agent fan-out, reads the `{ agent }` payload, and disposes through a
+  request-disposer map.
+- Catalog compat alias `deepseek-v4-flash` now declares
+  `inputModalities: [text, image]`; `deepseek-v4-pro` stays text-only
+  (V4-Pro has no vision). Patch notes clarify id-targeted rows replace the
+  whole row config.
+- Skill content is built from the configured routes (`buildSkillContent`,
+  exported), and `skills/pro-flash-routing/SKILL.md` is checked against it
+  by a test.
+- Partial route configs now inherit the provider/model defaults, so setting
+  only `planner.model` no longer sends `provider: undefined`.
+- The CI workflow is tracked again and runs on Node 24.
+- README tuning example and log-check regex fixed.
+- `esbuild` is declared as a devDependency.
+- Tests: distinct planner/executor model names, router lifecycle coverage
+  (`test/router.test.ts`), partial-route omit-to-inherit regression guards
+  (57 passing).
+
 ## v0.7.0
 
 - **V4.1 Flash (`deepseek-flash`, 2026-09-10)**: planner, executor, and vision

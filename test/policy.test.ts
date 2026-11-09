@@ -10,8 +10,8 @@ import {
 } from "../src/policy.js";
 
 const CONFIG: RouterConfig = {
-  planner: { provider: "deepseek-official", model: "deepseek-flash" },
-  executor: { provider: "deepseek-official", model: "deepseek-flash" },
+  planner: { provider: "deepseek-official", model: "planner-model" },
+  executor: { provider: "deepseek-official", model: "executor-model" },
   mode: "strict",
   enabled: true,
   promptSection: true,
@@ -22,6 +22,9 @@ const CONFIG: RouterConfig = {
     model: "deepseek-flash",
   },
 };
+
+const PLANNER_ROUTE = { provider: "deepseek-official", model: "planner-model" };
+const EXECUTOR_ROUTE = { provider: "deepseek-official", model: "executor-model" };
 
 describe("Config", () => {
   it("defaults enabled to true", () => {
@@ -39,6 +42,21 @@ describe("Config", () => {
     expect(cfg.skill).toBe(true);
     expect(cfg.planner.model).toBe("deepseek-flash");
     expect(cfg.executor.model).toBe("deepseek-flash");
+  });
+});
+
+describe("Config partial routes", () => {
+  it("fills provider from the default when only planner.model is set", () => {
+    const planner = Config({ planner: { model: "deepseek-v4-pro" } }).planner;
+    expect(planner.provider).toBe("deepseek-official");
+    expect(planner.model).toBe("deepseek-v4-pro");
+  });
+
+  it("fills model and provider from defaults when only executor.reasoningEffort is set", () => {
+    const executor = Config({ executor: { reasoningEffort: "low" } }).executor;
+    expect(executor.model).toBe("deepseek-flash");
+    expect(executor.provider).toBe("deepseek-official");
+    expect(executor.reasoningEffort).toBe("low");
   });
 });
 
@@ -69,52 +87,42 @@ describe("roleFor", () => {
 });
 
 describe("routeFor", () => {
-  it("routes planners to pro in strict mode", () => {
-    expect(routeFor({}, CONFIG)).toEqual({ provider: "deepseek-official", model: "deepseek-flash" });
+  it("routes the root (planner) agent to the planner route in strict mode", () => {
+    expect(routeFor({}, CONFIG)).toEqual(PLANNER_ROUTE);
   });
 
-  it("routes executors to flash", () => {
-    expect(routeFor({ options: { subagentDepth: 1 } }, CONFIG)).toEqual({
-      provider: "deepseek-official",
-      model: "deepseek-flash",
-    });
+  it("routes subagents to the executor route, distinct from the planner route", () => {
+    expect(routeFor({ options: { subagentDepth: 1 } }, CONFIG)).toEqual(EXECUTOR_ROUTE);
+    expect(routeFor({}, CONFIG)?.model).not.toBe(routeFor({ options: { subagentDepth: 1 } }, CONFIG)?.model);
   });
 
   it("passes through reasoningEffort and maxTokens when configured", () => {
     const config: RouterConfig = {
       ...CONFIG,
-      planner: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: "high", maxTokens: 8192 },
+      planner: { provider: "deepseek-official", model: "planner-model", reasoningEffort: "high", maxTokens: 8192 },
     };
     expect(routeFor({}, config)).toEqual({
       provider: "deepseek-official",
-      model: "deepseek-flash",
+      model: "planner-model",
       reasoningEffort: "high",
       maxTokens: 8192,
     });
   });
 
-  it("in plan mode, routes the root to executor when not planning", () => {
+  it("in plan mode, routes the root to the executor route when not planning", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
-    expect(routeFor({}, config, false)).toEqual({
-      provider: "deepseek-official",
-      model: "deepseek-flash",
-    });
+    expect(routeFor({}, config, false)).toEqual(EXECUTOR_ROUTE);
   });
 
   it("in plan mode, keeps the root on the planner route while planning", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
-    expect(routeFor({}, config, true)).toEqual({
-      provider: "deepseek-official",
-      model: "deepseek-flash",
-    });
+    expect(routeFor({}, config, true)).toEqual(PLANNER_ROUTE);
   });
 
-  it("in plan mode, executors stay on the executor route regardless", () => {
+  it("in plan mode, executors stay on the executor route regardless of planning", () => {
     const config: RouterConfig = { ...CONFIG, mode: "plan" };
-    expect(routeFor({ options: { subagentDepth: 1 } }, config, true)).toEqual({
-      provider: "deepseek-official",
-      model: "deepseek-flash",
-    });
+    expect(routeFor({ options: { subagentDepth: 1 } }, config, true)).toEqual(EXECUTOR_ROUTE);
+    expect(routeFor({ options: { subagentDepth: 1 } }, config, false)).toEqual(EXECUTOR_ROUTE);
   });
 
   it("returns undefined for unknown roles (defensive)", () => {
