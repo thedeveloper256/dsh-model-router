@@ -1,5 +1,72 @@
 # Changelog
 
+## v0.8.0
+
+- **Breaking:** Port to DeepSeek Harness 0.2.x. Requires 0.2.1+ (`engines.dsh:
+  ">=0.2.1-rc.1 <0.3.0-0"`) and does not load on 0.1.x; users on 0.1.x stay
+  on v0.7.2. On 0.2.x, v0.7.x failed to import (`foldPlanMode` /
+  `installSettingsSection` were removed) and its `agent/request` rewrite
+  cannot change the model there, so v0.7.x did nothing on 0.2.x.
+- **Changed:** Routing now calls `agent.model.select({ provider, model,
+  reasoningEffort })` once when an agent is created (root sessions and every
+  subagent), then only when the route decision changes: plan-mode toggles,
+  image content appearing, or error escalation starting/wearing off. It never
+  re-selects on an unchanged decision, so a model the user picks mid-session
+  stays until the next route change. Resumed sessions keep their recorded
+  model.
+- **Changed:** A route change applies from the next model step. Plan-mode
+  routing lags one step because the harness captures the step's model before
+  that step's `plan/mode` events are appended. The harness adds its own
+  model-switch notice to the conversation.
+- **Changed:** A route's `reasoningEffort` (or `escalateTo` while escalating)
+  is pinned; otherwise the agent's current effort is kept. `maxTokens` on a
+  route sets `AgentOptions.maxTokens`.
+- **Changed:** The settings card registers in the `plugins.item` slot
+  (Settings → Plugins) and edits the plugin's profile entry config through the
+  harness config forms. A change remounts the plugin and applies from the next
+  agent/route change. The harness migrates the old `settings.yaml` into the
+  profile itself; the Vision switch writes only `vision.enabled`.
+- **Removed:** `@deepseek-ai/dsh-plan-mode` and `@deepseek-ai/dsh-settings` are
+  no longer peer dependencies.
+- **Changed:** README verification uses the compressed session logs at
+  `~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd` (read with
+  Node 23.8+ `zlib.zstdDecompressSync`), the `request/header` event's
+  `data.header.config.model`, and `delegationDepth`; it points at
+  `spike/b1/check-models.mjs` (`node spike/b1/check-models.mjs [sinceEpochMs]`).
+  Removed the old request-rewrite, live-`settings.yaml`, and log-grep claims.
+
+## v0.7.2
+
+- Fix the `agent/disposed` leak for real: v0.7.1's single listener still
+  compared the payload to the agent, but the harness sends `{ agent }`, so
+  request listeners were never released. The listener now reads `{ agent }`
+  (a bare agent is still accepted), and disposers live in a `WeakMap`, so
+  disposed agents are not retained.
+- Catalog: `deepseek-v4-pro` is text-only again (`inputModalities: [text]`);
+  V4-Pro has no vision per the
+  [Models & Pricing page](https://api-docs.deepseek.com/quick_start/pricing).
+  v0.7.1 wrongly declared image input for it. If you point the planner at
+  V4-Pro, set `vision.enabled: true` so image sessions go to `deepseek-flash`.
+- Partial route configs now inherit the provider/model defaults field by
+  field, so setting only `planner.model` no longer sends `provider: undefined`;
+  the rewrite never stamps an empty provider or model.
+- Skill text: `buildSkillContent` now also mentions vision routing when it's
+  on and says "Both roles produce `X`" when the models match. The skill
+  description and `whenToUse` no longer say "pro"/"flash".
+  `skills/pro-flash-routing/SKILL.md` is regenerated and checked against
+  `buildSkillContent` by a test.
+- The request rewrite is a testable `requestRewrite(agent)` method; new tests
+  cover role routing, vision, `enabled: false`, token/effort pins, partial
+  routes and dispose edge cases (59 passing).
+- README: the tuning example uses a direct `- id: model-router` row (the
+  `- patch:` wrapper is ignored by the loader), and the log-check regex is
+  `[a-z0-9.-]*` so `deepseek-v4-*` ids are counted.
+- The CI workflow is tracked again and runs on Node 24; `esbuild` is declared
+  as a devDependency. Settings-card and publish-script copy no longer say
+  "pro"/"flash".
+- Add `REVIEW-AND-PLAN.md`: review findings and the plan for harness 0.2.1+
+  support (`agent.model.select`).
+
 ## v0.7.1
 
 - Correct the v0.7.0 retirement note: `deepseek-v4-pro` continues after
