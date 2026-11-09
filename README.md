@@ -7,6 +7,14 @@ A small plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 Both roles share the same model until V4.1-Pro launches (V4.1 Flash already beats V4-Pro on performance, cost, and speed, so DeepSeek is retiring `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` — both now route to V4.1 Flash server-side — while `deepseek-v4-pro` continues after Sep 14, 2026 with unchanged billing, per the [official changelog](https://api-docs.deepseek.com/updates)). The role split stays in the config, so flipping the planner back to Pro later is a one-line change. V4-Pro has no vision. Set `vision.enabled: true` so image sessions go to `deepseek-flash`. You keep the careful plan/delegate/review rhythm without paying Pro prices for every tool call.
 
+## Compatibility
+
+v0.8.0 targets DeepSeek Harness **0.2.1 and later 0.2.x** (`engines.dsh`:
+`>=0.2.1-rc.1 <0.3.0-0`). It does not load on 0.1.x — users on 0.1.x stay on
+v0.7.2. On 0.2.x, v0.7.x failed to import (the harness removed the
+`foldPlanMode` / `installSettingsSection` exports) and its `agent/request`
+rewrite cannot change the model there, so v0.7.x did nothing on 0.2.x.
+
 ## Install
 
 Add it to a profile (this installs into the `web` profile; change the name for another one):
@@ -29,7 +37,7 @@ Once it's in, restart the profile. You should see the row under `model-router` i
 
 Three small surfaces, one rule:
 
-1. **Request routing** — every model request gets stamped with a role. Root agents get the planner route; delegation children (`subagent`, `subagent_fork`, workflow workers, ralph rounds) get the executor route. Both default to `deepseek-flash` (V4.1 Flash) until V4.1-Pro launches, so today the stamp unifies while the role split stays configurable. The rewrite sits at the outermost layer of the request pipeline, so it wins — even over the harness's own default model and over whatever model you pick in the UI for the session. That's intentional: it's the "enforce" knob.
+1. **Model selection** — when an agent is created — the root session and every delegated subagent — the router calls `agent.model.select({ provider, model, reasoningEffort })` to put it on its role route. Root agents get the planner route; delegation children (`subagent`, `subagent_fork`, workflow workers, ralph rounds) get the executor route. Both default to `deepseek-flash` (V4.1 Flash) until V4.1-Pro launches, so today the split is parked while the role config stays ready. After creation the router selects again only when the route decision changes: plan-mode toggles, image content appearing, or error escalation starting/wearing off. It never re-selects on an unchanged decision, so a model you pick mid-session stays until the next route change.
 2. **A prompt section** — a short note that renders before the agent's persona, telling the planner: you're the thinker, delegate the implementation. Without this, the model tends to just do everything itself.
 3. **A skill** — the `pro-flash-routing` skill shows up in the session's skill catalog and spells out the working rhythm: plan, delegate, review, report. Same convention, but loadable on demand when the agent wants details. Since v0.7.1 the skill text follows your configured routes instead of hardcoding model names.
 
@@ -42,89 +50,90 @@ An agent is an *executor* if it carries either of the markers the harness stamps
 
 Everything else is a planner. That logic lives in `src/policy.ts` as a plain function, so it's easy to reason about and test.
 
-### What the router does and doesn't override
+### What the router sets
 
-The router always stamps `provider` + `model`. `reasoningEffort` and `maxTokens` are *optional per role*: set them in the config and they're enforced for that role; leave them out and those fields inherit from your session's selection. So picking "max effort" in the UI but not pinning `reasoningEffort` in the config still gives you max-effort thinking — it just happens on the routed model.
+The router sets `provider` + `model` through `agent.model.select()`. `reasoningEffort` is pinned only when a route configures it (or `escalateTo` while escalation is active); otherwise the agent's current effort is kept. `maxTokens` on a route sets the agent's output cap (`AgentOptions.maxTokens`). Selection happens once at agent creation, then only on a route change — choosing a different model in the UI mid-session is respected until the next plan-mode toggle, image, or escalation transition. Resumed sessions keep their recorded model until the next change. A route change takes effect from the next model step; plan-mode routing lags one step because the harness captures the step's model before that step's `plan/mode` events are appended. The harness adds its own model-switch notice to the conversation.
 
 ### What still differs while the models are unified
 
-With both routes on `deepseek-flash`, the model stamp is a pass-through — but the roles are not identical:
+With both routes on `deepseek-flash`, the model choice is a pass-through — but the roles are not identical:
 
 - **Effort and token pins are per role.** Planner `high` + executor `low`, for example, genuinely behaves and costs differently per role today.
 - **The convention still steers behavior.** The prompt section and skill keep the root agent planning and delegating instead of doing everything itself, regardless of model.
-- **Enforcement still pins the model.** Every request lands on `deepseek-flash` no matter what the session or UI selects.
+- **Selection still sets the model.** Every new agent starts on `deepseek-flash`, and a route change puts it back there — even if the session or UI was on something else.
 - **The split is parked, not removed.** When V4.1-Pro launches, pointing the planner route at it restores the two-model setup with a one-line change.
 
 ## Turning the router off
 
 Routing is on by default. Two ways to switch it off:
 
-- **GUI (Settings → Plugins → Model router):** the plugin registers a live
-  settings section; flip `enabled` off. It applies immediately (no restart),
-  persists in `settings.yaml` under `model-router:`, and unregisters the prompt
-  section and the skill too. Flip it back on and everything returns. The same
-  card also hosts the Vision switch (v0.6.0+, see below).
+- **GUI (Settings → Plugins → Model router):** the plugin registers a card in
+  the harness's `plugins.item` slot. Flip `enabled` off; the card writes the
+  plugin's profile entry config through the harness config forms, which
+  remounts the plugin and applies from the next agent/route change. It also
+  unregisters the prompt section and the skill. Flip it back on and everything
+  returns. The same card hosts the Vision switch (v0.6.0+, see below).
 - **Patch row:** set `enabled: false` in the profile's `cordis.patch.yml` row
   (takes effect on the next boot). `disabled: true` still skips the row entirely.
 
-With the router off, requests use the session's selected model (your
-`agent-default-model` setting or the base default) — the router is simply not
-rewriting them.
+With the router off, the router makes no selections: new agents use the
+session's selected model (your `agent-default-model` setting or the base
+default).
 
 ## The GUI toggle (v0.5.0+)
 
 Since v0.5.0 the package ships a browser half, and the harness serves it
-automatically — no extra config. After installing (or updating to) v0.5.0+
-and restarting the profile, **Settings → Plugins** shows a **Model router**
-card with a live **Enabled** switch, an "Overridden" badge and **Reset to
+automatically — no extra config. On 0.2.x the card registers in the
+`plugins.item` slot, so **Settings → Plugins** shows a **Model router** card
+with a live **Enabled** switch, an "Overridden" badge and **Reset to
 default** button once you've changed it, a read-only view of the current
 planner/executor routes and mode, and a Vision section (v0.6.0+) with its own
 live **Vision** switch, **Reset vision to default** button, and read-only
-vision-model line. Flipping the switch applies immediately (no
-restart) and persists in `settings.yaml` under `model-router:` — the same
-mechanism the GUI toggle described above uses.
+vision-model line. A settings change remounts the plugin and applies from the
+next agent/route change. Earlier versions kept the live toggle in
+`settings.yaml`; the harness migrates that file into the profile itself, and
+the card now edits the plugin's profile entry config through the harness
+config forms. The Vision switch writes only `vision.enabled`.
 
 One harness-wide caveat (it applies to **all** settings pages — Models,
 Plugins, everything — not to this plugin specifically): the harness serves
 settings pages only to **loopback** browsers (`localhost` / `127.x`). A remote
 browser may not get the settings page at all; where the card does render it
-shows a read-only note. Fallbacks that
-work everywhere:
+shows a read-only note. The fallback that works everywhere:
 
 - **Patch row** — set `enabled: false` in the profile's `cordis.patch.yml`
-  (takes effect on the next boot), or
-- **`settings.yaml`** — add `model-router: { enabled: false }` under the
-  settings file the profile uses; this applies live, same as the GUI.
+  (takes effect on the next boot); this is the same config the card edits.
 
 ## Vision routing (v0.6.0+)
 
-Since v0.6.0 the router can also handle image-bearing requests. **It is opt-in
+Since v0.6.0 the router can also handle image-bearing sessions. **It is opt-in
 and off by default** (`vision.enabled: false`). Two ways to turn it on:
 
-- **GUI:** on the same **Model router** card, flip the **Vision** switch (live,
-  no restart, persists in `settings.yaml`), or
+- **GUI:** on the same **Model router** card, flip the **Vision** switch
+  (writes only `vision.enabled`), or
 - **Patch row / settings:** set `vision.enabled: true` on the plugin's config.
 
-When enabled, **any request sent while the session log carries an image is stamped with the
-vision model** — `deepseek-flash` from `deepseek-official` by
-default (V4.1 Flash is natively multimodal, so this matches the role routes
-unless you pin something else) — **from every role**: the root (planner) agent and all delegated
-subagents. Everything else keeps the role routing untouched. The
-vision branch is checked first, so an image-bearing request lands on the
+When enabled, the router selects the vision model **as soon as the session log
+carries an image** — `deepseek-flash` from `deepseek-official` by default
+(V4.1 Flash is natively multimodal, so this matches the role routes unless you
+pin something else) — **from every role**: the root (planner) agent and all
+delegated subagents. Everything else keeps the role routing untouched. The
+vision branch is checked first, so an image-bearing session lands on the
 vision model even when it comes from a subagent. With the default config the
-vision model is the same `deepseek-flash` as the role routes, so the branch
-is a no-op until you pin a different vision model. Optional `vision.reasoningEffort` /
-`vision.maxTokens` pins work exactly like the per-role ones. Image detection
-reads the session event log (`user/message`, `assistant/message`, and
-`tool/result`, including images nested in `tool-result` blocks): once an image
-appears anywhere in the log, subsequent requests stay on the vision model for
-the rest of the session (sticky — the image stays in request context until
-compaction or pruning drops it). Detection shapes are verified against real
-session logs: `user/message` carries the image at `data.content`, while
-`assistant/message` and `tool/result` carry it at `data.message.content`
-(tool results nest it inside a `tool-result` block). Possible follow-up:
-optional `vision.historyLimit` to bound the scan to the trailing N events
-(unset keeps today's sticky entire-log scan).
+vision model is the same `deepseek-flash` as the role routes, so the branch is
+a no-op until you pin a different vision model. Optional
+`vision.reasoningEffort` / `vision.maxTokens` pins work exactly like the
+per-role ones. Image detection reads the session event log (`user/message`,
+`assistant/message`, and `tool/result`, including images nested in
+`tool-result` blocks): once an image appears anywhere in the log, the router
+keeps the vision model selected for the rest of the session (sticky — the
+image stays in request context until compaction or pruning drops it).
+Detection shapes are verified against real session logs: `user/message`
+carries the image at `data.content`, while `assistant/message` and
+`tool/result` carry it at `data.message.content` (tool results nest it inside
+a `tool-result` block). Possible follow-up: optional `vision.historyLimit` to
+bound the scan to the trailing N events (unset keeps today's sticky entire-log
+scan).
 
 The plugin ships the support in its own `cordis.patch.yml`:
 
@@ -169,7 +178,7 @@ All configuration lives on the plugin row. Override it in the profile's `cordis.
       model: deepseek-flash
       reasoningEffort: high
       escalateOnError: true   # after a failed step…
-      escalateTo: max         #   …bump effort for the next request
+      escalateTo: max         #   …bump effort at the next route decision
       recoverySteps: 2        #   …wearing off after N clean steps
     mode: strict        # strict | plan (see below)
     promptSection: true # register the always-on routing section
@@ -180,9 +189,9 @@ An `- id:` row **replaces the whole plugin config** (not a deep merge), so
 restate every field you want — anything you leave out falls back to its
 default.
 
-`mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving the planner route for real planning.
+`mode` controls how the root agent is treated: `strict` keeps it on the planner route always; `plan` sends the root to the executor route unless plan mode is active, reserving the planner route for real planning. A plan-mode toggle is a route change, so it applies from the next model step (the harness captures that step's model before the step's `plan/mode` events are appended). `maxTokens` on a route sets the agent's output cap (`AgentOptions.maxTokens`).
 
-**Error-driven escalation** (`escalateOnError`): when a route's agent hits a failed tool step, the *next* request bumps to `escalateTo` and wears off after `recoverySteps` clean steps. It's deterministic and stateless — the router folds the session log per request, so only prior steps are considered (a failure can't escalate the very request that caused it). It's a per-route knob: enable it on the executor to make flash think harder after a flubbed execution step, without touching the baseline.
+**Error-driven escalation** (`escalateOnError`): when a route's agent hits a failed tool step, the *next* route decision bumps to `escalateTo` and wears off after `recoverySteps` clean steps. It's deterministic and stateless — the router folds the session log when it decides, so only prior steps are considered (a failure can't escalate the step that caused it). It's a per-route knob: enable it on the executor to make flash think harder after a flubbed execution step, without touching the baseline.
 
 The model defaults are exactly the two routes at the top of this page. To switch the router off for a session, disable the row (`disabled: true`) or remove the plugin — `dsh plugin --profile web remove dsh-model-router`. If even the convention surface is unwanted until V4.1-Pro lands, flip `enabled` off (see above) and leave the plugin installed — everything unregisters and you flip it back on later.
 
@@ -202,31 +211,37 @@ The first three are one-line changes on this plugin's row; the last three are di
 
 ## Does it work?
 
-Verify against a real session log. Run a task that makes the agent plan and delegate, then check which models actually made the requests:
+Verify against a real session log. Run a task that makes the agent plan and
+delegate, then check which model each request used.
+
+Session logs are zstd-compressed at
+`~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd` (Node 23.8+ can
+read them with `zlib.zstdDecompressSync`). Each model request writes a
+`request/header` event; its `data.header.config.model` is the model used. The
+session's `delegationDepth` tells planner from executor: `0` is the root,
+`>=1` is a subagent.
+
+The repo ships a ready-made script that does exactly this:
 
 ```bash
-zstd -d -c "$DSH_HOME"/sessions/<workspace>/<session>/session.jsonl.zstd \
-  | grep '"type":"assistant/message"' \
-  | grep -o '"model":"deepseek-[a-z0-9.-]*"' | sort | uniq -c
+node spike/b1/check-models.mjs [sinceEpochMs]
 ```
 
-Two details matter in that command: filtering to `assistant/message` counts only real model responses
-(the raw log also records `request/header`, session-title, and web-search calls, which would inflate
-the numbers), and the `[a-z0-9.-]*` pattern keeps the whole model id — letters, digits, hyphens and
-dots — so `deepseek-flash`, `deepseek-v4-pro` and `deepseek-v4-flash-vision-exp` all survive. An
-earlier `[a-z-]*` pattern could not match digits, so every `deepseek-v4-*` id silently dropped out of
-the count.
+It prints one line per session — delegation depth, agent preset, and a count
+of request models — and a PASS/FAIL verdict. `sinceEpochMs` limits the scan to
+sessions modified after that time (omit it to scan all).
 
-Since v0.7.0 both roles log `deepseek-flash` (unified until V4.1-Pro lands and
+Since v0.7.0 both roles use `deepseek-flash` (unified until V4.1-Pro lands and
 the planner route points at it). For reference, the v4-era split re-verified
 against production logs: a root session with delegations showed 170 pro / 182
 flash responses, and every child session (`delegationDepth >= 1`) showed flash
 only; with vision routing enabled, an image-heavy session logged 508
 `deepseek-v4-flash-vision-exp` responses.
 
-One operational note: the routing rewrite is loaded at harness boot. After updating the plugin (e.g.
-0.7.1 → 0.7.2), restart the profile — a session that keeps running across the update can keep behaving
-per the old code until the process reloads.
+One operational note: the plugin loads at harness boot. After updating the
+package (e.g. 0.7.2 → 0.8.0), restart the profile — a session that keeps
+running across the update can keep behaving per the old code until the process
+reloads.
 
 ## Development
 

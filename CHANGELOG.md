@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.8.0
+
+- **Breaking:** Port to DeepSeek Harness 0.2.x. Requires 0.2.1+ (`engines.dsh:
+  ">=0.2.1-rc.1 <0.3.0-0"`) and does not load on 0.1.x; users on 0.1.x stay
+  on v0.7.2. On 0.2.x, v0.7.x failed to import (`foldPlanMode` /
+  `installSettingsSection` were removed) and its `agent/request` rewrite
+  cannot change the model there, so v0.7.x did nothing on 0.2.x.
+- **Changed:** Routing now calls `agent.model.select({ provider, model,
+  reasoningEffort })` once when an agent is created (root sessions and every
+  subagent), then only when the route decision changes: plan-mode toggles,
+  image content appearing, or error escalation starting/wearing off. It never
+  re-selects on an unchanged decision, so a model the user picks mid-session
+  stays until the next route change. Resumed sessions keep their recorded
+  model.
+- **Changed:** A route change applies from the next model step. Plan-mode
+  routing lags one step because the harness captures the step's model before
+  that step's `plan/mode` events are appended. The harness adds its own
+  model-switch notice to the conversation.
+- **Changed:** A route's `reasoningEffort` (or `escalateTo` while escalating)
+  is pinned; otherwise the agent's current effort is kept. `maxTokens` on a
+  route sets `AgentOptions.maxTokens`.
+- **Changed:** The settings card registers in the `plugins.item` slot
+  (Settings → Plugins) and edits the plugin's profile entry config through the
+  harness config forms. A change remounts the plugin and applies from the next
+  agent/route change. The harness migrates the old `settings.yaml` into the
+  profile itself; the Vision switch writes only `vision.enabled`.
+- **Removed:** `@deepseek-ai/dsh-plan-mode` and `@deepseek-ai/dsh-settings` are
+  no longer peer dependencies.
+- **Changed:** README verification uses the compressed session logs at
+  `~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd` (read with
+  Node 23.8+ `zlib.zstdDecompressSync`), the `request/header` event's
+  `data.header.config.model`, and `delegationDepth`; it points at
+  `spike/b1/check-models.mjs` (`node spike/b1/check-models.mjs [sinceEpochMs]`).
+  Removed the old request-rewrite, live-`settings.yaml`, and log-grep claims.
+
 ## v0.7.2
 
 - Fix the `agent/disposed` leak for real: v0.7.1's single listener still
