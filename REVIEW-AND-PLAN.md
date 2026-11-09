@@ -373,3 +373,16 @@ B1 (live) runs in parallel with all of Track A. B2, B3 and B4 come after Q1/Q2. 
 6. **Static `skills/pro-flash-routing/SKILL.md`:** keep it as a generated, test-guarded copy (A8), or delete it, since the runtime registers the skill?
 7. **CI node version:** 24 only (matches the harness runtime) or a [22, 24] matrix? And should vitest move from 2.x to 5.x now or later?
 8. **Delegation workers:** your coordinator suggested haiku workers, but your CLAUDE.md says DeepSeek via OpenCode by default and no haiku. I used no subagents for this review. Should the plan's worker column stay DS/S/O as written?
+
+## Decisions (2026-11-08)
+
+1. **Target harness: 0.2.1+ only.** No legacy `agent/request` model-rewrite path for 0.1.0-rc.8 hosts. B2 drops the dual path and feature detection; B4 sets `engines.dsh` and the peer/dev ranges to 0.2.1+.
+2. **Enforce vs. respect: switch only on route transitions.** Subagents get the executor selection once, at `agent/created`. The root agent gets the planner selection at creation, then the router calls `agent.model.select()` again only when its own decision changes: plan mode on/off (in `plan` mode), the first image in a session (vision enabled), or escalation starting or wearing off. A model the user picks by hand mid-session stays until one of those triggers fires. No per-step re-assertion, so no `model/selection` churn.
+3. **Ship before Track B:** done; v0.7.2 ships Track A, and its notes say routing on 0.2.1+ is unverified until B1/B2.
+4. **V4-Pro planner and images: docs, not magic, for now.** Keep `vision.enabled` opt-in; the README and CHANGELOG tell V4-Pro users to enable it. Revisit in B2: once the router reads the model catalog, it can warn (log once) when a role model lacks image input and vision is off.
+5. **`llm-deepseek` override: drop it if B5 confirms discovery.** If endpoint discovery on 0.2.1+ lists `deepseek-flash` with image input, remove the plugin's `llm-deepseek` row. Keep the `attachment-local` limits unless B5 shows the host defaults already admit normal screenshots.
+6. **Static `SKILL.md`: keep it** as the generated, test-guarded copy (A8). It documents the skill for repo readers and for tools that read skills from disk, and the drift test keeps it honest.
+7. **CI: Node 24 only** (matches the harness runtime). Vitest 2.x → 5.x moves with B4, alongside the 0.2.x dependency bump.
+8. **Workers:** DeepSeek via OpenCode for mechanical edits, Haiku 5.5 (medium) allowed for test writing and sweeps, Sonnet for sensitive code, Opus (high) for the B2 design.
+
+**Next:** B1 is the live check only you can run (it needs a 0.2.1 harness and an API key). B2's design depends on its result.
