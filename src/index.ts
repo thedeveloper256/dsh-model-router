@@ -182,6 +182,21 @@ interface AgentLike {
   };
 }
 
+/**
+ * What the router overrode on one agent, so it can hand the agent's own
+ * values back when a later route stops pinning them.
+ */
+interface Overrides {
+  /** Effort the router last pinned; `undefined` when it pinned none. */
+  effort?: string;
+  /** The agent's effort before the router's first pin. */
+  baseEffort?: string;
+  /** maxTokens the router last assigned; `undefined` when it assigned none. */
+  maxTokens?: number;
+  /** The agent's maxTokens before the router's first assignment. */
+  baseMaxTokens?: number;
+}
+
 /** Why an agent was announced (dsh-agent `SessionStartSource`). */
 type StartSource = "startup" | "resume" | "clear" | "compact";
 
@@ -311,6 +326,9 @@ class ModelRouter extends Service {
   /** Live agent per session object, for `session/event` dispatch. */
   private readonly agentBySession = new WeakMap<object, AgentLike>();
 
+  /** Effort / maxTokens the router currently overrides, per agent. */
+  private readonly overrides = new WeakMap<object, Overrides>();
+
   constructor(ctx: Context, rawConfig: unknown = {}) {
     super(ctx, "modelRouter");
     this.config = resolveConfig(rawConfig);
@@ -329,6 +347,7 @@ class ModelRouter extends Service {
       const agent = disposedAgentOf(payload);
       if (agent === undefined) return;
       this.lastKey.delete(agent);
+      this.overrides.delete(agent);
       if (agent.session !== undefined) this.agentBySession.delete(agent.session);
     });
     // Post-commit append feed: re-decide on events that can change the route.
@@ -354,7 +373,35 @@ class ModelRouter extends Service {
       scoped.effect(() => scoped.settings.configure({ auto: false }, fiber));
     });
 
+    // A settings edit remounts this plugin mid-session, after `agent/created`
+    // has fired for the agents already running. Adopt them so their later
+    // route transitions are still handled; record the decision without
+    // selecting, so the new config applies from the next route change.
+    (ctx as unknown as {
+      inject(deps: string[], cb: (child: Context) => void): unknown;
+    }).inject(["agents"], (child) => {
+      const registry = (child as unknown as { agents?: { list?: () => AgentLike[] } }).agents;
+      let live: AgentLike[] = [];
+      try {
+        live = registry?.list?.() ?? [];
+      } catch {
+        live = [];
+      }
+      for (const agent of live) this.adopt(agent);
+    });
+
     this.render(this.config);
+  }
+
+  /**
+   * Track an agent that already exists (it was created before this instance
+   * mounted). Records the current decision without selecting.
+   * @param agent - the live agent.
+   */
+  adopt(agent: AgentLike): void {
+    if (agent === null || typeof agent !== "object") return;
+    if (agent.session !== undefined) this.agentBySession.set(agent.session, agent);
+    if (!this.lastKey.has(agent)) this.apply(agent, true);
   }
 
   /**
@@ -397,9 +444,12 @@ class ModelRouter extends Service {
     this.lastKey.set(agent, decision.key);
     if (seedOnly) return;
     const { route, effort } = decision;
-    if (route.maxTokens !== undefined && agent.options !== undefined) {
-      agent.options.maxTokens = route.maxTokens;
+    let state = this.overrides.get(agent);
+    if (state === undefined) {
+      state = {};
+      this.overrides.set(agent, state);
     }
+    this.applyMaxTokens(agent, route.maxTokens, state);
     const model = agent.model;
     if (model === undefined) return;
     let current: Readonly<ModelSelection> | undefined;
@@ -408,7 +458,22 @@ class ModelRouter extends Service {
     } catch {
       current = undefined;
     }
-    const reasoningEffort = effort ?? current?.reasoningEffort;
+    // A pinned effort overrides the agent's own; remember that own effort the
+    // first time so an unpinned route later hands it back. If someone changed
+    // the effort since the router's pin, keep their choice instead.
+    let reasoningEffort: string | undefined;
+    if (effort !== undefined) {
+      if (state.effort === undefined) state.baseEffort = current?.reasoningEffort;
+      state.effort = effort;
+      reasoningEffort = effort;
+    } else {
+      reasoningEffort =
+        state.effort !== undefined && current?.reasoningEffort === state.effort
+          ? state.baseEffort
+          : current?.reasoningEffort;
+      state.effort = undefined;
+      state.baseEffort = undefined;
+    }
     const selection: ModelSelection = {
       provider: route.provider,
       model: route.model,
@@ -416,6 +481,28 @@ class ModelRouter extends Service {
     };
     if (sameSelection(current, selection)) return;
     model.select(selection);
+  }
+
+  /**
+   * Assign or release the route's maxTokens cap. A released cap restores the
+   * agent's own value, unless something else changed it since the router's
+   * assignment.
+   */
+  private applyMaxTokens(agent: AgentLike, cap: number | undefined, state: Overrides): void {
+    const options = agent.options;
+    if (options === undefined) return;
+    if (cap !== undefined) {
+      if (state.maxTokens === undefined) state.baseMaxTokens = options.maxTokens;
+      options.maxTokens = cap;
+      state.maxTokens = cap;
+      return;
+    }
+    if (state.maxTokens !== undefined && options.maxTokens === state.maxTokens) {
+      if (state.baseMaxTokens === undefined) delete options.maxTokens;
+      else options.maxTokens = state.baseMaxTokens;
+    }
+    state.maxTokens = undefined;
+    state.baseMaxTokens = undefined;
   }
 
   /**

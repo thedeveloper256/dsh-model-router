@@ -68,7 +68,7 @@ function stepEnd(turn: number, step: number): SessionEvent {
   return sessionEvent("step/end", { turn, step });
 }
 
-function makeFakeCtx() {
+function makeFakeCtx(liveAgents: unknown[] = []) {
   const listeners = new Map<string, Listener[]>();
   const captured: { prompt?: PromptSection; skill?: RegisteredSkill } = {};
   const settingsConfigure = vi.fn((_options: { auto?: boolean }, _owner?: unknown) => vi.fn());
@@ -78,11 +78,15 @@ function makeFakeCtx() {
   const fakeCtx = {
     reflect: { provide: vi.fn() },
     fiber: { id: "test-fiber" },
-    inject: vi.fn((_deps: string[], cb: (child: unknown) => void) => {
-      cb({
+    inject: vi.fn((deps: string[], cb: (child: unknown) => void) => {
+      const child: Record<string, unknown> = {
         effect,
         settings: { configure: settingsConfigure },
-      });
+      };
+      // The router adopts already-running agents through the `agents`
+      // registry on mount, so expose the test's live list for that injection.
+      if (deps.includes("agents")) child.agents = { list: () => liveAgents };
+      cb(child);
     }),
     systemPrompt: {
       section: vi.fn((section: PromptSection) => {
@@ -106,8 +110,8 @@ function makeFakeCtx() {
   return { fakeCtx, listeners, captured, settingsConfigure, effect };
 }
 
-function makeHarness(config: unknown = {}) {
-  const ctx = makeFakeCtx();
+function makeHarness(config: unknown = {}, liveAgents: unknown[] = []) {
+  const ctx = makeFakeCtx(liveAgents);
   // eslint-disable-next-line no-new
   new ModelRouter(ctx.fakeCtx as never, config);
   const emit = (event: string, ...args: unknown[]): void => {
@@ -126,8 +130,14 @@ interface AgentInit {
 
 function makeAgent(init: AgentInit = {}) {
   const events = init.events ?? [];
-  const select = vi.fn((_selection: Selection): void => {});
-  const current = vi.fn((): Selection | undefined => init.current);
+  // Realistic fake: `select()` becomes the value `current()` reports, as in
+  // the harness. A static `current()` hides router bugs that only appear when
+  // the router reads back its own previous selection.
+  let currentSelection: Selection | undefined = init.current;
+  const select = vi.fn((selection: Selection): void => {
+    currentSelection = selection;
+  });
+  const current = vi.fn((): Selection | undefined => currentSelection);
   const options: { subagentDepth?: number; maxTokens?: number } = {};
   if (init.subagentDepth !== undefined) options.subagentDepth = init.subagentDepth;
   if (init.maxTokens !== undefined) options.maxTokens = init.maxTokens;
@@ -164,8 +174,24 @@ describe("router lifecycle", () => {
     expect(harness.listeners.get("agent/disposed")).toHaveLength(1);
     expect(harness.listeners.get("session/event")).toHaveLength(1);
     expect(harness.fakeCtx.inject).toHaveBeenCalledWith(["settings"], expect.any(Function));
+    // The constructor also injects the live `agents` registry so a remount can
+    // adopt agents that already exist.
+    expect(harness.fakeCtx.inject).toHaveBeenCalledWith(["agents"], expect.any(Function));
+    expect(harness.fakeCtx.inject).toHaveBeenCalledTimes(2);
     expect(harness.effect).toHaveBeenCalledTimes(1);
     expect(harness.settingsConfigure).toHaveBeenCalledWith({ auto: false }, harness.fakeCtx.fiber);
+  });
+
+  it("adopts a live root agent on remount without selecting it", () => {
+    const root = makeAgent();
+    const harness = makeHarness({ ...ROUTES, mode: "plan" }, [root.agent]);
+
+    // Adoption records the decision for later transitions but must not
+    // re-select the model an already-running session chose.
+    expect(root.select).not.toHaveBeenCalled();
+
+    dispatch(harness, root, sessionEvent("plan/mode", { active: true }));
+    expect(root.select).toHaveBeenCalledWith({ provider: "p", model: "planner-m" });
   });
 });
 
@@ -408,6 +434,200 @@ describe("session event routing", () => {
       "high",
       "low",
     ]);
+  });
+
+  it("escalates an unpinned executor from its own effort and restores it", () => {
+    const harness = makeHarness({
+      executor: {
+        provider: "p",
+        model: "executor-m",
+        escalateOnError: true,
+        escalateTo: "max",
+        recoverySteps: 2,
+      },
+    });
+    const sub = makeAgent({
+      subagentDepth: 1,
+      current: { provider: "session-p", model: "session-m", reasoningEffort: "high" },
+    });
+    harness.emit("agent/created", { agent: sub.agent, source: "startup" });
+    expect(sub.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "high",
+    });
+
+    dispatch(harness, sub, toolResult(1, 1, { name: "SandboxUnavailableError" }));
+    expect(sub.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "max",
+    });
+
+    // Still inside the two-step recovery window.
+    dispatch(harness, sub, toolResult(1, 2));
+    dispatch(harness, sub, stepEnd(1, 2));
+    expect(sub.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "max",
+    });
+
+    // Both clean steps have now pushed the failure out of the window.
+    dispatch(harness, sub, toolResult(1, 3));
+    dispatch(harness, sub, stepEnd(1, 3));
+    expect(sub.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "high",
+    });
+
+    expect(sub.select.mock.calls.map((call) => call[0].reasoningEffort)).toEqual([
+      "high",
+      "max",
+      "high",
+    ]);
+  });
+
+  it("omits reasoningEffort after recovery when the agent started with none", () => {
+    const harness = makeHarness({
+      executor: {
+        provider: "p",
+        model: "executor-m",
+        escalateOnError: true,
+        escalateTo: "max",
+        recoverySteps: 2,
+      },
+    });
+    const sub = makeAgent({
+      subagentDepth: 1,
+      current: { provider: "session-p", model: "session-m" },
+    });
+    harness.emit("agent/created", { agent: sub.agent, source: "startup" });
+    const initial = sub.select.mock.calls[0]?.[0];
+    expect(initial).toEqual({ provider: "p", model: "executor-m" });
+    expect(Object.hasOwn(initial!, "reasoningEffort")).toBe(false);
+
+    dispatch(harness, sub, toolResult(1, 1, { name: "SandboxUnavailableError" }));
+    expect(sub.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "max",
+    });
+
+    dispatch(harness, sub, toolResult(1, 2));
+    dispatch(harness, sub, stepEnd(1, 2));
+    dispatch(harness, sub, toolResult(1, 3));
+    dispatch(harness, sub, stepEnd(1, 3));
+
+    const restored = sub.select.mock.calls.at(-1)?.[0];
+    expect(restored).toEqual({ provider: "p", model: "executor-m" });
+    expect(Object.hasOwn(restored!, "reasoningEffort")).toBe(false);
+  });
+
+  it("restores the agent's effort and maxTokens when leaving plan mode", () => {
+    const harness = makeHarness({
+      mode: "plan",
+      planner: {
+        provider: "p",
+        model: "planner-m",
+        reasoningEffort: "max",
+        maxTokens: 1000,
+      },
+      executor: { provider: "p", model: "executor-m" },
+    });
+    const root = makeAgent({
+      maxTokens: 999,
+      current: { provider: "session-p", model: "session-m", reasoningEffort: "low" },
+    });
+    harness.emit("agent/created", { agent: root.agent, source: "startup" });
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "low",
+    });
+    expect(root.options.maxTokens).toBe(999);
+
+    dispatch(harness, root, sessionEvent("plan/mode", { active: true }));
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "planner-m",
+      reasoningEffort: "max",
+    });
+    expect(root.options.maxTokens).toBe(1000);
+
+    dispatch(harness, root, sessionEvent("plan/mode", { active: false }));
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "low",
+    });
+    expect(root.options.maxTokens).toBe(999);
+  });
+
+  it("deletes absent effort and maxTokens when leaving plan mode", () => {
+    const harness = makeHarness({
+      mode: "plan",
+      planner: {
+        provider: "p",
+        model: "planner-m",
+        reasoningEffort: "max",
+        maxTokens: 1000,
+      },
+      executor: { provider: "p", model: "executor-m" },
+    });
+    const root = makeAgent();
+    harness.emit("agent/created", { agent: root.agent, source: "startup" });
+    expect(root.select).toHaveBeenLastCalledWith({ provider: "p", model: "executor-m" });
+    expect(Object.hasOwn(root.options, "maxTokens")).toBe(false);
+
+    dispatch(harness, root, sessionEvent("plan/mode", { active: true }));
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "planner-m",
+      reasoningEffort: "max",
+    });
+    expect(root.options.maxTokens).toBe(1000);
+
+    dispatch(harness, root, sessionEvent("plan/mode", { active: false }));
+    const restored = root.select.mock.calls.at(-1)?.[0];
+    expect(restored).toEqual({ provider: "p", model: "executor-m" });
+    expect(Object.hasOwn(restored!, "reasoningEffort")).toBe(false);
+    expect(Object.hasOwn(root.options, "maxTokens")).toBe(false);
+  });
+
+  it("keeps a user's own effort change through a later unpinned route", () => {
+    const harness = makeHarness({
+      mode: "plan",
+      planner: { provider: "p", model: "planner-m", reasoningEffort: "high" },
+      executor: { provider: "p", model: "executor-m" },
+    });
+    const root = makeAgent({
+      events: [sessionEvent("plan/mode", { active: true })],
+      current: { provider: "session-p", model: "session-m", reasoningEffort: "low" },
+    });
+    harness.emit("agent/created", { agent: root.agent, source: "startup" });
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "planner-m",
+      reasoningEffort: "high",
+    });
+
+    // The user picks another effort while the planner pin is active.
+    root.agent.model.select({
+      provider: "p",
+      model: "planner-m",
+      reasoningEffort: "low",
+    });
+
+    // Leaving plan mode goes to the unpinned executor route: the router must
+    // keep the user's effort, not snap back to the pre-pin baseline.
+    dispatch(harness, root, sessionEvent("plan/mode", { active: false }));
+    expect(root.select).toHaveBeenLastCalledWith({
+      provider: "p",
+      model: "executor-m",
+      reasoningEffort: "low",
+    });
   });
 
   it("ignores event types that cannot change the route", () => {

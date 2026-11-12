@@ -20,7 +20,13 @@
   model-switch notice to the conversation.
 - **Changed:** A route's `reasoningEffort` (or `escalateTo` while escalating)
   is pinned; otherwise the agent's current effort is kept. `maxTokens` on a
-  route sets `AgentOptions.maxTokens`.
+  route sets `AgentOptions.maxTokens`. When a later route pins neither, the
+  router hands back the agent's own effort and `maxTokens` from before its pin
+  (so error escalation wears off and leaving plan mode drops the planner's
+  caps), unless they were changed since the pin, which is then kept.
+- **Changed:** After a settings change remounts the plugin, agents already
+  running are adopted from `ctx.agents.list()` (decision recorded, nothing
+  selected), so their later route changes still apply.
 - **Changed:** The settings card registers in the `plugins.item` slot
   (Settings → Plugins) and edits the plugin's profile entry config through the
   harness config forms. A change remounts the plugin and applies from the next
