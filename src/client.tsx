@@ -1,5 +1,5 @@
 /**
- * dsh-model-router browser half (v0.6.0).
+ * dsh-model-router browser half (v0.7.2).
  *
  * Registers one card into the Plugins settings surface: a live `enabled`
  * switch plus a read-only view of the current routes, and (v0.6.0+) an
@@ -43,7 +43,7 @@ const en: Record<string, string> = {
   executorRoute: "Executor model",
   mode: "Mode",
   modeStrict: "strict — the root agent is always the planner",
-  modePlan: "plan — the root agent is pro only while plan mode is active",
+  modePlan: "plan — the root agent uses the planner route only while plan mode is active",
   visionTitle: "Vision routing",
   visionDesc:
     "Opt-in (default off, native on deepseek-flash): when enabled, any request containing an image routes to the vision model, from every role; other requests keep the role routing.",
@@ -70,7 +70,7 @@ const zh: Record<string, string> = {
   executorRoute: "执行模型",
   mode: "模式",
   modeStrict: "strict — 根 agent 始终为规划者",
-  modePlan: "plan — 根 agent 仅在计划模式激活时使用 pro",
+  modePlan: "plan — 根 agent 仅在计划模式激活时使用规划者路由",
   visionTitle: "视觉路由",
   visionDesc:
     "可选（默认关闭，deepseek-flash 原生支持）：启用后，任何包含图片的请求都会路由到视觉模型，适用于所有角色；其他请求保持角色路由。",

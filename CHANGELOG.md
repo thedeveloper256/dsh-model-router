@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.7.2
+
+- Fix the `agent/disposed` leak for real: v0.7.1's single listener still
+  compared the payload to the agent, but the harness sends `{ agent }`, so
+  request listeners were never released. The listener now reads `{ agent }`
+  (a bare agent is still accepted), and disposers live in a `WeakMap`, so
+  disposed agents are not retained.
+- Catalog: `deepseek-v4-pro` is text-only again (`inputModalities: [text]`);
+  V4-Pro has no vision per the
+  [Models & Pricing page](https://api-docs.deepseek.com/quick_start/pricing).
+  v0.7.1 wrongly declared image input for it. If you point the planner at
+  V4-Pro, set `vision.enabled: true` so image sessions go to `deepseek-flash`.
+- Partial route configs now inherit the provider/model defaults field by
+  field, so setting only `planner.model` no longer sends `provider: undefined`;
+  the rewrite never stamps an empty provider or model.
+- Skill text: `buildSkillContent` now also mentions vision routing when it's
+  on and says "Both roles produce `X`" when the models match. The skill
+  description and `whenToUse` no longer say "pro"/"flash".
+  `skills/pro-flash-routing/SKILL.md` is regenerated and checked against
+  `buildSkillContent` by a test.
+- The request rewrite is a testable `requestRewrite(agent)` method; new tests
+  cover role routing, vision, `enabled: false`, token/effort pins, partial
+  routes and dispose edge cases (59 passing).
+- README: the tuning example uses a direct `- id: model-router` row (the
+  `- patch:` wrapper is ignored by the loader), and the log-check regex is
+  `[a-z0-9.-]*` so `deepseek-v4-*` ids are counted.
+- The CI workflow is tracked again and runs on Node 24; `esbuild` is declared
+  as a devDependency. Settings-card and publish-script copy no longer say
+  "pro"/"flash".
+- Add `REVIEW-AND-PLAN.md`: review findings and the plan for harness 0.2.1+
+  support (`agent.model.select`).
+
 ## v0.7.1
 
 - Correct the v0.7.0 retirement note: `deepseek-v4-pro` continues after
