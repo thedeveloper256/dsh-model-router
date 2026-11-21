@@ -1,17 +1,18 @@
 /**
- * dsh-model-router browser half (v0.6.0).
+ * dsh-model-router browser half (v0.8.0).
  *
  * Registers one card into the Plugins settings surface: a live `enabled`
  * switch plus a read-only view of the current routes, and (v0.6.0+) an
- * opt-in Vision routing section with its own live switch. The card binds the
- * `model-router` settings namespace through the client settings scope, exactly
- * like the host-plane cards in `@deepseek-ai/dsh-client-ui-settings-plugins`:
- * the scope's snapshot (`{ status, value, base, user, revision, writable,
- * mode }`) is the single source of truth, and `set`/`unset` writes are
- * revision-fenced and persisted live to `settings.yaml`.
+ * opt-in Vision routing section with its own live switch. The card follows
+ * the `model-router` profile entry's config form through the client
+ * `configForms` service (0.2.x): the form snapshot (`{ status, value, base,
+ * user, revision, writable }`) is the single source of truth, `set`/`unset`
+ * submit one field write, and `mutate` submits atomic nested operations.
+ * The form is shared, so the controller mirrors it into its own snapshot
+ * store and releases its view subscription on disposal.
  *
  * Only `react` is imported — every other runtime dependency (`slots`, the
- * settings scope, locale) arrives through cordis services the loader resolves
+ * config forms, locale) arrives through cordis services the loader resolves
  * at runtime.
  *
  * @module dsh-model-router/client
@@ -22,7 +23,7 @@ import { createElement, type CSSProperties } from "react";
 const NS = "model-router";
 
 /** Cordis service names this bundle injects (loader-resolved at runtime). */
-export const inject = ["slots", "locale", "settingsScope"];
+export const inject = ["slots", "locale", "configForms"];
 
 /** English copy. */
 const en: Record<string, string> = {
@@ -43,7 +44,7 @@ const en: Record<string, string> = {
   executorRoute: "Executor model",
   mode: "Mode",
   modeStrict: "strict — the root agent is always the planner",
-  modePlan: "plan — the root agent is pro only while plan mode is active",
+  modePlan: "plan — the root agent uses the planner route only while plan mode is active",
   visionTitle: "Vision routing",
   visionDesc:
     "Opt-in (default off, native on deepseek-flash): when enabled, any request containing an image routes to the vision model, from every role; other requests keep the role routing.",
@@ -70,7 +71,7 @@ const zh: Record<string, string> = {
   executorRoute: "执行模型",
   mode: "模式",
   modeStrict: "strict — 根 agent 始终为规划者",
-  modePlan: "plan — 根 agent 仅在计划模式激活时使用 pro",
+  modePlan: "plan — 根 agent 仅在计划模式激活时使用规划者路由",
   visionTitle: "视觉路由",
   visionDesc:
     "可选（默认关闭，deepseek-flash 原生支持）：启用后，任何包含图片的请求都会路由到视觉模型，适用于所有角色；其他请求保持角色路由。",
@@ -79,15 +80,14 @@ const zh: Record<string, string> = {
   visionRoute: "视觉模型",
 };
 
-/** The settings scope snapshot this card reads. */
-interface ScopeSnapshot {
+/** The config form snapshot this card reads. */
+interface FormSnapshot {
   status: string;
   value?: ConfigView;
   base?: unknown;
   user?: Partial<ConfigView>;
   revision?: number;
   writable: boolean;
-  mode: string;
 }
 
 /** The validated `model-router` config as served by the settings transport. */
@@ -99,43 +99,53 @@ interface ConfigView {
   vision?: { enabled?: boolean; provider?: string; model?: string };
 }
 
+/** One atomic nested write submitted through {@link ConfigForm.mutate}. */
+interface FormMutation {
+  op: "set" | "unset";
+  path: string[];
+  value?: unknown;
+}
+
+/** The shared config form for one profile entry. */
+interface ConfigForm {
+  getSnapshot(): FormSnapshot;
+  subscribe(listener: () => void): () => void;
+  set(field: string, value: unknown): Promise<unknown>;
+  unset(field: string): Promise<unknown>;
+  mutate(operations: FormMutation[]): Promise<unknown>;
+}
+
 /** Minimal cordis browser-context surface this bundle consumes. */
 interface ApplyContext {
   locale: {
     bind(ns: string): (key: string) => string;
-    register(ns: string, dict: { zh: typeof zh; en: typeof en }): unknown;
+    register(ns: string, dict: { zh: typeof zh; en: typeof en }): () => void;
   };
   slots: {
-    inject(name: string, register: () => Generator<unknown>): unknown;
+    inject(name: string, register: () => unknown): () => void;
     register(options: SlotOptions, component: unknown): unknown;
   };
-  settingsScope: {
-    bind(spec: { namespace: string }): SettingsScope;
+  configForms: {
+    get(entryId: string): ConfigForm;
+    whileServed(namespaces: string[], register: () => (() => void) | void): () => void;
   };
   effect(fn: () => void | (() => void), label?: string): unknown;
 }
 
-/** One `settings.plugin.item` registration. */
+/** One `plugins.item` registration. */
 interface SlotOptions {
   name: string;
-  key: string;
+  id: string;
+  order: number;
+  label(): string;
   locale: string;
   inject(): unknown;
-}
-
-/** The bound settings scope for one namespace. */
-interface SettingsScope {
-  getSnapshot(): ScopeSnapshot;
-  subscribe(listener: () => void): () => void;
-  set(field: string, value: unknown): Promise<unknown>;
-  unset(field: string): Promise<unknown>;
-  dispose(): Promise<void>;
 }
 
 /** Snapshot-store face the slot machinery turns into a `useXxx` hook prop. */
 interface SnapshotStore {
   subscribe(listener: () => void): () => void;
-  getSnapshot(): ScopeSnapshot;
+  getSnapshot(): FormSnapshot;
 }
 
 /** What the card's slot registration injects. */
@@ -150,7 +160,7 @@ interface ModelRouterCardActions {
 /** Props the card component receives from the slot dispatch. */
 interface ModelRouterCardProps {
   t(key: string): string;
-  useModelRouterCard<T>(selector: (snapshot: ScopeSnapshot) => T): T;
+  useModelRouterCard<T>(selector: (snapshot: FormSnapshot) => T): T;
   setEnabled(next: boolean): Promise<void>;
   reset(): Promise<void>;
   setVisionEnabled(next: boolean): Promise<void>;
@@ -158,22 +168,36 @@ interface ModelRouterCardProps {
 }
 
 /**
- * Bridges the `model-router` scope onto the card. Thin by design: the scope
- * itself is the snapshot store, and the card reads it through the slot
- * machinery's `useModelRouterCard` hook. Writes go straight to the scope and
- * any failure settles by re-reading, which re-renders the card.
+ * Bridges the shared `model-router` config form onto the card. Thin by
+ * design: the controller mirrors the form into a stable snapshot store the
+ * card reads through the slot machinery's `useModelRouterCard` hook, and
+ * releases its form subscription when the fiber stops. Writes go straight to
+ * the form and any failure settles by re-reading, which re-renders the card.
  */
 class ModelRouterCardController {
-  scope: SettingsScope;
+  private readonly form: ConfigForm;
+  private readonly listeners = new Set<() => void>();
+  private readonly unsubscribe: () => void;
+  private snapshot: FormSnapshot;
 
-  constructor(scope: SettingsScope) {
-    this.scope = scope;
+  constructor(form: ConfigForm) {
+    this.form = form;
+    this.snapshot = form.getSnapshot();
+    this.unsubscribe = form.subscribe(() => {
+      this.snapshot = this.form.getSnapshot();
+      for (const listener of this.listeners) listener();
+    });
   }
 
   get store(): SnapshotStore {
     return {
-      subscribe: (listener) => this.scope.subscribe(listener),
-      getSnapshot: () => this.scope.getSnapshot(),
+      subscribe: (listener) => {
+        this.listeners.add(listener);
+        return () => {
+          this.listeners.delete(listener);
+        };
+      },
+      getSnapshot: () => this.snapshot,
     };
   }
 
@@ -183,7 +207,7 @@ class ModelRouterCardController {
       hooks: { modelRouterCard: this.store },
       setEnabled: async (next) => {
         try {
-          await this.scope.set("enabled", next);
+          await this.form.set("enabled", next);
         } catch {
           // A failed write settles by re-reading; the snapshot refresh
           // re-renders the card from what the deployment actually accepted.
@@ -191,25 +215,23 @@ class ModelRouterCardController {
       },
       reset: async () => {
         try {
-          await this.scope.unset("enabled");
+          await this.form.unset("enabled");
         } catch {
           // See setEnabled.
         }
       },
-      // Vision toggle merges into the current user-layer vision object so the
-      // provider/model base fields survive the write; reset drops the whole
-      // vision key from the user layer, restoring the schema defaults.
+      // Vision writes address only the nested `vision.enabled` field, so the
+      // provider/model base fields survive; reset drops that one override.
       setVisionEnabled: async (next) => {
         try {
-          const current = this.scope.getSnapshot().value?.vision;
-          await this.scope.set("vision", { ...(current ?? {}), enabled: next });
+          await this.form.mutate([{ op: "set", path: ["vision", "enabled"], value: next }]);
         } catch {
           // See setEnabled.
         }
       },
       resetVision: async () => {
         try {
-          await this.scope.unset("vision");
+          await this.form.mutate([{ op: "unset", path: ["vision", "enabled"] }]);
         } catch {
           // See setEnabled.
         }
@@ -217,9 +239,10 @@ class ModelRouterCardController {
     };
   }
 
-  /** Stop the scope's mirror subscription when the fiber stops. */
+  /** Stop the form's mirror subscription when the fiber stops. */
   dispose(): void {
-    void this.scope.dispose();
+    this.unsubscribe();
+    this.listeners.clear();
   }
 }
 
@@ -240,16 +263,15 @@ function modeLabel(t: (key: string) => string, mode: string): string {
  * Render the model router card: the live `enabled` switch, an "overridden"
  * badge and reset button when the user layer overrides `enabled`, a Vision
  * routing section (v0.6.0+) with its own live switch and reset, and read-only
- * route lines. Away from a loopback browser the scope is read-only
- * (`writable` false / `mode` not "host"); the card then shows the unavailable
- * note instead of controls.
+ * route lines. When the form is not writable the card shows the unavailable
+ * note and disables the switches.
  */
 function ModelRouterCard(props: ModelRouterCardProps) {
   const { t } = props;
   const state = props.useModelRouterCard((snapshot) => snapshot);
-  const unavailable = !state.writable || state.mode !== "host";
+  const readOnly = !state.writable;
   const overridden = state.user?.enabled !== undefined;
-  const visionOverridden = state.user?.vision !== undefined;
+  const visionOverridden = state.user?.vision?.enabled !== undefined;
 
   return createElement("section", { style: styles.card }, [
     createElement("div", { style: styles.headRow }, [
@@ -257,67 +279,68 @@ function ModelRouterCard(props: ModelRouterCardProps) {
       overridden ? createElement("span", { style: styles.badge }, t("overridden")) : null,
     ]),
     createElement("p", { style: styles.description }, t("description")),
-    ...(unavailable
-      ? [createElement("p", { style: styles.note }, t("readOnly"))]
-      : state.value
-        ? [
+    ...(readOnly ? [createElement("p", { style: styles.note }, t("readOnly"))] : []),
+    ...(state.value
+      ? [
+          createElement("div", { style: styles.switchRow }, [
+            createElement("label", { htmlFor: "model-router-enabled", style: styles.label }, t("enabled")),
+            createElement("input", {
+              id: "model-router-enabled",
+              type: "checkbox",
+              checked: Boolean(state.value.enabled),
+              disabled: readOnly,
+              onChange: (event: { currentTarget: { checked: boolean } }) => {
+                void props.setEnabled(event.currentTarget.checked);
+              },
+              style: styles.switch,
+            }),
+            createElement("span", { style: styles.status }, state.value.enabled ? t("on") : t("off")),
+          ]),
+          createElement("p", { style: styles.hint }, t("enabledHint")),
+          overridden
+            ? createElement(
+                "button",
+                { type: "button", style: styles.reset, onClick: () => void props.reset() },
+                t("reset"),
+              )
+            : null,
+          createElement("div", { style: styles.vision }, [
             createElement("div", { style: styles.switchRow }, [
-              createElement("label", { htmlFor: "model-router-enabled", style: styles.label }, t("enabled")),
+              createElement("label", { htmlFor: "model-router-vision", style: styles.label }, t("visionSwitch")),
               createElement("input", {
-                id: "model-router-enabled",
+                id: "model-router-vision",
                 type: "checkbox",
-                checked: Boolean(state.value.enabled),
+                checked: Boolean(state.value.vision?.enabled),
+                disabled: readOnly,
                 onChange: (event: { currentTarget: { checked: boolean } }) => {
-                  void props.setEnabled(event.currentTarget.checked);
+                  void props.setVisionEnabled(event.currentTarget.checked);
                 },
                 style: styles.switch,
               }),
-              createElement("span", { style: styles.status }, state.value.enabled ? t("on") : t("off")),
+              createElement("span", { style: styles.status }, state.value.vision?.enabled ? t("on") : t("off")),
             ]),
-            createElement("p", { style: styles.hint }, t("enabledHint")),
-            overridden
+            createElement("p", { style: styles.hint }, t("visionDesc")),
+            visionOverridden
               ? createElement(
                   "button",
-                  { type: "button", style: styles.reset, onClick: () => void props.reset() },
-                  t("reset"),
+                  { type: "button", style: styles.reset, onClick: () => void props.resetVision() },
+                  t("visionReset"),
                 )
               : null,
-            createElement("div", { style: styles.vision }, [
-              createElement("div", { style: styles.switchRow }, [
-                createElement("label", { htmlFor: "model-router-vision", style: styles.label }, t("visionSwitch")),
-                createElement("input", {
-                  id: "model-router-vision",
-                  type: "checkbox",
-                  checked: Boolean(state.value.vision?.enabled),
-                  onChange: (event: { currentTarget: { checked: boolean } }) => {
-                    void props.setVisionEnabled(event.currentTarget.checked);
-                  },
-                  style: styles.switch,
-                }),
-                createElement("span", { style: styles.status }, state.value.vision?.enabled ? t("on") : t("off")),
-              ]),
-              createElement("p", { style: styles.hint }, t("visionDesc")),
-              visionOverridden
-                ? createElement(
-                    "button",
-                    { type: "button", style: styles.reset, onClick: () => void props.resetVision() },
-                    t("visionReset"),
-                  )
-                : null,
-              createElement("dl", { style: styles.routes }, [
-                routeRow(
-                  t("visionRoute"),
-                  `${state.value.vision?.model ?? "—"} · ${state.value.vision?.provider ?? "—"}`,
-                ),
-              ]),
-            ]),
             createElement("dl", { style: styles.routes }, [
-              routeRow(t("plannerRoute"), state.value.planner?.model ?? "—"),
-              routeRow(t("executorRoute"), state.value.executor?.model ?? "—"),
-              routeRow(t("mode"), modeLabel(t, state.value.mode)),
+              routeRow(
+                t("visionRoute"),
+                `${state.value.vision?.model ?? "—"} · ${state.value.vision?.provider ?? "—"}`,
+              ),
             ]),
-          ]
-        : []),
+          ]),
+          createElement("dl", { style: styles.routes }, [
+            routeRow(t("plannerRoute"), state.value.planner?.model ?? "—"),
+            routeRow(t("executorRoute"), state.value.executor?.model ?? "—"),
+            routeRow(t("mode"), modeLabel(t, state.value.mode)),
+          ]),
+        ]
+      : []),
   ]);
 }
 
@@ -446,31 +469,38 @@ const styles: Record<string, CSSProperties> = {
 };
 
 /**
- * Mount the card into the Plugins settings surface.
+ * Mount the card into the Plugins surface while the Host serves the
+ * `model-router` config form.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ApplyContext): void {
   const t = ctx.locale.bind(NS);
   ctx.effect(
-    () => {
-      ctx.locale.register(NS, { zh, en });
-    },
+    () => ctx.locale.register(NS, { zh, en }),
     "model-router: card dictionaries",
   );
-  const controller = new ModelRouterCardController(ctx.settingsScope.bind({ namespace: NS }));
-  ctx.slots.inject("settings.plugin.item", function* () {
-    yield ctx.slots.register(
-      {
-        name: "settings.plugin.item",
-        key: NS,
-        locale: NS,
-        inject: () => controller.inject(),
-      },
-      ModelRouterCard,
-    );
-  });
+  const card = new ModelRouterCardController(ctx.configForms.get("model-router"));
   ctx.effect(
-    () => () => controller.dispose(),
-    "model-router: card controller",
+    () => () => card.dispose(),
+    "model-router: form subscription",
+  );
+  ctx.effect(
+    () =>
+      ctx.configForms.whileServed(["model-router"], () =>
+        ctx.slots.inject("plugins.item", () =>
+          ctx.slots.register(
+            {
+              name: "plugins.item",
+              id: "model-router",
+              order: 50,
+              label: () => t("title"),
+              locale: NS,
+              inject: () => card.inject(),
+            },
+            ModelRouterCard,
+          ),
+        ),
+      ),
+    "model-router: card",
   );
 }

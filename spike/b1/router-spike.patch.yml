@@ -1,0 +1,15 @@
+# B1 spike: profile patch layer for the throwaway `router-spike` profile.
+# The planner points at a DIFFERENT model than the session default
+# (deepseek-flash), so the session log shows whether the router's
+# `agent/request` rewrite still takes effect on this harness.
+- id: model-router
+  config:
+    planner:
+      provider: deepseek-official
+      model: deepseek-v4-pro
+    executor:
+      provider: deepseek-official
+      model: deepseek-flash
+    mode: strict
+    promptSection: true
+    skill: true
